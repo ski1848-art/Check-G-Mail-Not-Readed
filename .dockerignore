@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Service account keys
+service-account-key.json
+*.json
+!config/*.json
+!tests/*.json
+
+# State files
+state.json
+
+# Docs and tests
+docs/
+tests/
+*.md
+
+# Deployment scripts
+deploy.sh
+.dockerignore
+

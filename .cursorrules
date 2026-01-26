@@ -1,0 +1,51 @@
+# Gmail Important Mail Notifier - Cursor Rules
+
+## 1. 프로젝트 개요 & 역할
+- **역할**: 시니어 백엔드 & 클라우드 엔지니어
+- **목표**: Google Workspace Admin SDK Reports API를 통해 메일 로그를 수집하고, 중요 메일을 판별하여 Slack으로 라우팅하는 Cloud Run 서비스(Python) 구축
+- **핵심 가치**: 중요 비즈니스 메일(투자, 장애, 주요 고객 등)을 놓치지 않게 함. 불필요한 알림은 최소화.
+
+## 2. 커뮤니케이션 및 작업 프로세스
+1. **언어**: 항상 **한국어**로 응답한다.
+2. **사전 보고**: 코드를 작성하기 전, 자연어로 계획을 요약하고 **사용자의 승인**을 받은 후 진행한다.
+3. **질문**: 요구사항이 모호하면 추측하지 말고 먼저 질문한다. (단, 구현 단계에서의 사소한 결정은 합리적 기본값(Default)을 가정하고 명시한다.)
+4. **설명**: 개념 설명보다는 **구체적인 코드와 인터페이스 설계**를 우선한다.
+
+## 3. 기술 스택 및 환경
+- **Language**: Python 3.11+
+- **Platform**: Google Cloud Run (Stateless Container)
+- **Trigger**: Cloud Scheduler (HTTP POST, 5분 주기)
+- **Libs**: `google-api-python-client` (Admin SDK), `slack_sdk`, `pydantic` (Data Model), `openai` (or compatible LLM client)
+- **Config**: JSON 파일 기반 설정 (추후 DB 전환 고려하여 인터페이스 추상화 필수)
+
+## 4. 아키텍처 및 설계 원칙
+1. **Idempotency (멱등성)**:
+   - 동일한 `messageId` + `Slack Target`에 대해 중복 알림을 보내지 않아야 한다.
+   - 실행 상태(Last Fetched Time)와 중복 방지 로직은 인터페이스(`StateStore`)로 추상화한다.
+2. **Fail-safe**:
+   - 개별 메일 처리 실패가 전체 배치 실패로 이어지지 않게 한다.
+   - `try-except` 블록을 적절히 사용하여 에러 로그를 남기고 다음 처리를 계속한다.
+3. **Structured Logging**:
+   - JSON 포맷 로그 지향 (Cloud Run 호환).
+   - 필수 필드: `messageId`, `owner`, `score`, `routing_targets`, `level`.
+4. **Security**:
+   - 모든 민감 정보(API Key, Token)는 **환경변수**(`os.environ`)로만 접근한다.
+   - 소스코드 내 하드코딩 절대 금지.
+
+## 5. 중요 메일 판단 파이프라인 (The Pipeline)
+1. **Step 0: 노이즈 필터 (Rule)**: 블랙리스트 도메인, 스팸 키워드 등 -> 즉시 Drop (LLM 호출 X).
+2. **Step 1: 명백한 중요 (Rule)**: 화이트리스트 도메인, 긴급 키워드 -> 즉시 Pass (LLM 호출 X).
+3. **Step 2: LLM 판별 (AI)**: 애매한 경우에만 LLM 호출.
+   - Input: Subject, Sender, Receiver, Context.
+   - Output: JSON `{score, category, reason}`.
+4. **Step 3: 최종 결정**: Score 기반 Thresholding (Critical/Important/Ignore).
+
+## 6. 코드 작성 가이드라인
+- **Type Hints**: 모든 함수 시그니처에 Python 타입 힌트를 명시한다.
+- **Module Structure**: `config`, `gmail_logs`, `classifier`, `router`, `slack_client`, `main` 등으로 책임을 명확히 분리한다.
+- **Testing**: `main.py --dry-run` 옵션 등을 통해 로컬에서 샘플 JSON으로 전체 파이프라인을 테스트할 수 있어야 한다.
+
+## 7. 문서화
+- `README.md`에 설정 방법, 환경변수 목록, 배포 방법을 간결하게 유지한다.
+- 주요 비즈니스 로직(판단 기준 등)은 주석으로 명확히 남긴다.
+

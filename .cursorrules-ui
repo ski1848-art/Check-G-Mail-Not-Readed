@@ -1,0 +1,284 @@
+# UI/UX Design System - Cursor Rules
+
+## 1. 디자인 철학
+- **명확성**: 사용자가 무엇을 해야 하는지 즉시 이해할 수 있어야 함
+- **일관성**: 모든 페이지에서 동일한 패턴과 스타일 유지
+- **효율성**: 최소한의 클릭/스크롤로 목표 달성
+- **접근성**: 키보드 네비게이션, 스크린 리더 지원 고려
+
+## 2. 기술 스택
+- **CSS Framework**: Tailwind CSS (Utility-first)
+- **아이콘**: 이모지(Emoji) 또는 텍스트 기호 우선, SVG는 최소한으로만 사용
+- **폰트**: 시스템 폰트 스택 (Inter, -apple-system, sans-serif)
+- **반응형**: Mobile-first 접근
+
+## 3. 색상 시스템
+
+### Primary Colors
+- **Primary**: `blue-600` (주요 액션, 링크)
+- **Primary Hover**: `blue-700`
+- **Primary Light**: `blue-50` (호버 배경)
+
+### Status Colors
+- **Success**: `green-100` (배경) / `green-700` (텍스트)
+- **Warning**: `yellow-100` (배경) / `yellow-700` (텍스트)
+- **Danger**: `red-100` (배경) / `red-700` (텍스트)
+- **Info**: `blue-100` (배경) / `blue-700` (텍스트)
+
+### Neutral Colors
+- **Background**: `gray-50` (페이지 배경)
+- **Card Background**: `white`
+- **Border**: `gray-200` (카드 테두리), `gray-300` (입력 필드)
+- **Text Primary**: `gray-900` (제목, 중요 텍스트)
+- **Text Secondary**: `gray-600` (부제목, 설명)
+- **Text Muted**: `gray-400` (비활성, 플레이스홀더)
+
+## 4. 타이포그래피
+
+### 제목
+- **H1**: `text-2xl font-bold text-gray-900` (페이지 제목)
+- **H2**: `text-xl font-bold text-gray-900` (섹션 제목)
+- **H3**: `text-lg font-semibold text-gray-900` (서브섹션)
+
+### 본문
+- **Body**: `text-sm text-gray-600` (일반 텍스트)
+- **Small**: `text-xs text-gray-500` (보조 텍스트)
+- **Code**: `text-xs font-mono bg-gray-100 px-2 py-1 rounded` (코드 블록)
+
+## 5. 컴포넌트 스타일
+
+### 버튼 (Button)
+```css
+/* Primary Button */
+.btn-primary: bg-blue-600 text-white hover:bg-blue-700 shadow-sm hover:shadow-md
+/* Secondary Button */
+.btn-secondary: bg-gray-100 text-gray-700 hover:bg-gray-200
+/* Outline Button */
+.btn-outline: border-2 border-blue-500 text-blue-600 bg-white hover:bg-blue-50
+/* Danger Button */
+.btn-danger: bg-red-600 text-white hover:bg-red-700
+```
+
+**사용 규칙**:
+- 주요 액션: `btn-primary`
+- 취소/보조 액션: `btn-secondary`
+- 삭제/위험 액션: `btn-danger`
+- 모든 버튼: `px-4 py-2 rounded-lg text-sm font-medium`
+
+### 배지 (Badge)
+```css
+/* Success Badge */
+.badge-success: bg-green-100 text-green-700
+/* Warning Badge */
+.badge-warning: bg-yellow-100 text-yellow-700
+/* Danger Badge */
+.badge-danger: bg-red-100 text-red-700
+/* Info Badge */
+.badge-info: bg-blue-100 text-blue-700
+/* Gray Badge */
+.badge-gray: bg-gray-100 text-gray-600
+```
+
+**사용 규칙**:
+- 상태 표시: `badge badge-{status}` + `rounded-full px-2.5 py-1 text-xs font-medium`
+- 이모지와 함께 사용: `📧 이메일`, `● 활성`, `✓ 완료`
+
+### 카드 (Card)
+```css
+.card: rounded-xl border border-gray-200 bg-white shadow-sm
+```
+
+**사용 규칙**:
+- 콘텐츠 그룹핑: `card p-6`
+- 호버 효과: `hover:shadow-md transition-shadow`
+- 테이블 컨테이너: `card overflow-hidden`
+
+### 입력 필드 (Input)
+```css
+.input: h-10 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm
+.input: focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
+```
+
+**사용 규칙**:
+- 플레이스홀더: `placeholder:text-gray-400`
+- 에러 상태: `border-red-300 focus:ring-red-500`
+- 비활성: `bg-gray-50 cursor-not-allowed`
+
+### 테이블 (Table)
+```css
+.table thead: bg-gray-50 border-b border-gray-200
+.table th: px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider
+.table td: px-4 py-3
+.table tbody tr: border-b border-gray-100 hover:bg-blue-50 transition-colors
+```
+
+**사용 규칙**:
+- 헤더는 대문자, 작은 폰트
+- 행 호버 시 연한 파란색 배경
+- 빈 상태: 큰 이모지 + 메시지
+
+## 6. 아이콘 가이드라인
+
+### 우선순위
+1. **이모지** (📧, 🔍, 👤, ⚠️, ✓, ×, →, ← 등)
+2. **텍스트 기호** (+, -, ×, ●, →, ← 등)
+3. **SVG** (멀티컬러 로고, 복잡한 그래픽만)
+
+### 사용 예시
+- 뒤로가기: `←` 또는 `← 뒤로`
+- 추가: `+ 사용자 추가`
+- 검색: `🔍` (검색창 내부)
+- 상태: `● 활성`, `✓ 완료`
+- 삭제: `×` (태그 내부)
+- 경고: `⚠️` (모달)
+
+**절대 금지**:
+- SVG 아이콘이 화면을 꽉 채우는 경우
+- 아이콘 크기가 일관되지 않은 경우
+- 아이콘만 있고 텍스트 라벨이 없는 경우 (접근성 문제)
+
+## 7. 레이아웃 패턴
+
+### 페이지 구조
+```
+<nav> (sticky top-0, border-b, shadow-sm)
+  <container>
+    <logo> + <navigation> + <user-menu>
+</nav>
+
+<main> (container mx-auto px-6 py-8)
+  <page-header> (flex justify-between)
+    <title-section>
+      <h1> + <description>
+    <action-buttons>
+  <content-section>
+    <filters/search>
+    <card>
+      <table> or <form> or <list>
+</main>
+```
+
+### 간격 (Spacing)
+- 섹션 간: `space-y-6` (24px)
+- 요소 간: `gap-4` (16px)
+- 폼 필드 간: `space-y-2` (8px)
+- 버튼 그룹: `gap-3` (12px)
+
+### 컨테이너
+- 최대 너비: `max-w-2xl` (폼), `max-w-4xl` (테이블)
+- 패딩: `px-6` (모바일), `px-8` (데스크톱)
+
+## 8. 인터랙션 패턴
+
+### 로딩 상태
+```tsx
+<div className="flex items-center justify-center py-12">
+  <div className="flex items-center gap-3">
+    <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-600 border-t-transparent"></div>
+    <p className="text-sm text-gray-600">불러오는 중...</p>
+  </div>
+</div>
+```
+
+### 빈 상태 (Empty State)
+```tsx
+<div className="card p-16 text-center">
+  <div className="text-5xl mb-4">👥</div>
+  <p className="text-sm font-medium text-gray-600">등록된 사용자가 없습니다</p>
+  <p className="mt-1 text-xs text-gray-500">새 사용자를 추가해보세요</p>
+</div>
+```
+
+### 에러 상태
+- 인라인 에러: 빨간색 텍스트 + 아이콘
+- 토스트/알림: 상단 고정, 자동 사라짐
+
+## 9. 다국어 지원 (한국어 우선)
+
+### 라벨 규칙
+- 모든 UI 텍스트는 **한글**로 작성
+- 기술 용어는 괄호 안에 영문 표기: `사용자 (User)`
+- 버튼: `저장`, `취소`, `삭제`, `편집`, `추가`
+- 상태: `활성`, `비활성`, `완료`, `대기 중`
+- 메시지: `불러오는 중...`, `저장 중...`, `등록된 항목이 없습니다`
+
+### 날짜/시간
+- 형식: `2024년 12월 19일 오후 3:30`
+- 상대 시간: `방금 전`, `5분 전`, `1시간 전`
+
+## 10. 반응형 디자인
+
+### 브레이크포인트
+- **Mobile**: 기본 (320px+)
+- **Tablet**: `sm:` (640px+)
+- **Desktop**: `lg:` (1024px+)
+
+### 모바일 최적화
+- 테이블: 수평 스크롤 또는 카드 형태로 변환
+- 네비게이션: 햄버거 메뉴
+- 버튼: 전체 너비 (`w-full`) 또는 적절한 크기 유지
+- 터치 타겟: 최소 44x44px
+
+## 11. 접근성 (A11y)
+
+### 필수 사항
+- 모든 버튼/링크에 명확한 텍스트 라벨
+- 이미지에 `alt` 속성
+- 키보드 네비게이션 지원 (`tabindex`, `focus` 스타일)
+- 색상 대비: WCAG AA 기준 준수 (4.5:1 이상)
+
+### ARIA 라벨
+- 로딩: `aria-label="불러오는 중"`
+- 버튼: `aria-label="사용자 추가"`
+- 모달: `role="dialog" aria-labelledby="modal-title"`
+
+## 12. 성능 최적화
+
+### 이미지/아이콘
+- 이모지/텍스트 기호 우선 사용 (SVG보다 가벼움)
+- 필요시만 SVG 사용, 크기 제한
+
+### CSS
+- Tailwind의 JIT 모드 활용
+- 사용하지 않는 스타일 자동 제거
+- 커스텀 CSS는 `@layer` 내에 정의
+
+## 13. 코드 작성 규칙
+
+### 클래스 네이밍
+- 컴포넌트 클래스: `.btn-primary`, `.badge-success` (하이픈 사용)
+- 유틸리티 클래스: Tailwind 기본 클래스 직접 사용
+- 커스텀 클래스: `globals.css`의 `@layer components`에 정의
+
+### 파일 구조
+```
+app/
+  globals.css (전역 스타일, 컴포넌트 클래스)
+  layout.tsx (네비게이션, 전역 레이아웃)
+  page.tsx (각 페이지)
+```
+
+### 예시 코드 패턴
+```tsx
+// ✅ 좋은 예
+<button className="btn btn-primary">
+  + 사용자 추가
+</button>
+
+// ❌ 나쁜 예
+<button className="bg-blue-600 text-white px-4 py-2 rounded">
+  <svg>...</svg> 사용자 추가
+</button>
+```
+
+## 14. 체크리스트
+
+새 페이지/컴포넌트 작성 시 확인:
+- [ ] 한글 라벨 사용
+- [ ] 이모지/텍스트 기호로 아이콘 표현
+- [ ] 일관된 색상 시스템 사용
+- [ ] 적절한 간격과 패딩
+- [ ] 로딩/빈 상태 처리
+- [ ] 반응형 디자인
+- [ ] 키보드 접근성
+- [ ] 명확한 시각적 계층 구조

@@ -1,0 +1,32 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+venv/
+.env
+.env.local
+.env.*.local
+
+# Firebase / Google Cloud Keys (CRITICAL)
+service-account-key.json
+*.local.json
+
+# Application State / Logs
+state.json
+*.log
+dev.log
+
+# Node modules (admin-web)
+node_modules/
+.next/
+out/
+build/
+.DS_Store
+
+# IDE files
+.vscode/
+.idea/
+.cursor/
+.tools/

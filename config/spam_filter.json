@@ -1,0 +1,49 @@
+{
+    "blacklist_domains": [
+        "mail.notion.so",
+        "notion.so",
+        "promotions.google.com",
+        "newsletter.com",
+        "marketing.com",
+        "no-reply.facebook.com",
+        "workspace-noreply@google.com",
+        "no-reply@accounts.google.com"
+    ],
+    "whitelist_domains": [
+        "important-client.com",
+        "investor.com",
+        "partner-company.com"
+    ],
+    "spam_keywords": [
+        "뉴스레터",
+        "무료 체험",
+        "unsubscribe",
+        "webinar",
+        "promotional",
+        "계정 삭제함",
+        "데이터가 전송되었습니다"
+    ],
+    "urgent_keywords": [
+        "긴급",
+        "장애",
+        "계약",
+        "제안서",
+        "invoice",
+        "투자",
+        "면접",
+        "제안",
+        "채용",
+        "인사",
+        "견적서",
+        "대원헬스케어",
+        "주간트랜드",
+        "주간트렌드",
+        "법무",
+        "변호사",
+        "소송",
+        "저작권",
+        "상표",
+        "내용증명",
+        "특허"
+    ]
+}
