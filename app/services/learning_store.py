@@ -78,18 +78,104 @@ COLLECTION_USER_FEEDBACK = "user_feedback"
 # =============================================
 # User Explicit Feedback (사용자 명시적 피드백)
 # =============================================
+
+def extract_email_type_pattern(subject: Optional[str]) -> str:
+    """
+    메일 제목에서 "유형 패턴"을 추출.
+    변동되는 부분(이름, 도메인명 등)을 제거하고 핵심 유형만 남김.
+    
+    예시:
+    - "[그리팅] 김한지 님이 ... 지원했습니다" → "[그리팅] 채용 지원 알림"
+    - "[NHN Domain] whatsell.co.kr 도메인명 기간연장 안내" → "[NHN Domain] 도메인 기간연장 안내"
+    - "Re: 회의 일정 조율" → "Re: 회의 관련"
+    """
+    import re
+    
+    if not subject:
+        return "일반 메일"
+    
+    original = subject.strip()
+    
+    # 1. 접두사 추출 (예: [그리팅], [NHN Domain], Re:, Fwd:)
+    prefix_match = re.match(r'^(\[.+?\]|Re:|RE:|Fwd:|FW:)\s*', original)
+    prefix = prefix_match.group(1) if prefix_match else ""
+    rest = original[len(prefix_match.group(0)):] if prefix_match else original
+    
+    # 2. 알려진 패턴 매칭 (우선순위 높음)
+    patterns = [
+        # 그리팅 채용 관련
+        (r'.*님이.*지원.*', '채용 지원 알림'),
+        (r'.*지원.*공고.*', '채용 지원 알림'),
+        (r'.*면접.*일정.*', '면접 일정 안내'),
+        (r'.*채용.*마감.*', '채용 마감 안내'),
+        
+        # 도메인/호스팅 관련
+        (r'.*도메인.*기간.*연장.*', '도메인 기간연장 안내'),
+        (r'.*도메인.*만료.*', '도메인 만료 안내'),
+        (r'.*호스팅.*연장.*', '호스팅 연장 안내'),
+        
+        # 결제/정산 관련
+        (r'.*결제.*실패.*', '결제 실패 안내'),
+        (r'.*결제.*완료.*', '결제 완료 안내'),
+        (r'.*정산.*신청.*', '정산 신청'),
+        (r'.*청구서.*', '청구서'),
+        (r'.*인보이스.*', '인보이스'),
+        
+        # 알림/리포트
+        (r'.*일일.*리포트.*', '일일 리포트'),
+        (r'.*주간.*리포트.*', '주간 리포트'),
+        (r'.*월간.*리포트.*', '월간 리포트'),
+        (r'.*알림.*설정.*', '알림 설정'),
+        
+        # 뉴스레터/마케팅
+        (r'.*뉴스레터.*', '뉴스레터'),
+        (r'.*newsletter.*', '뉴스레터'),
+        (r'.*프로모션.*', '프로모션'),
+        (r'.*할인.*', '프로모션'),
+    ]
+    
+    rest_lower = rest.lower()
+    for pattern, label in patterns:
+        if re.match(pattern, rest_lower, re.IGNORECASE):
+            return f"{prefix} {label}".strip() if prefix else label
+    
+    # 3. 동적 부분 제거 (이름, 도메인, 숫자 등)
+    # 한글 이름 패턴 (2-4글자)
+    cleaned = re.sub(r'[가-힣]{2,4}\s*님', '*님', rest)
+    # 도메인 패턴
+    cleaned = re.sub(r'[a-zA-Z0-9-]+\.(co\.kr|com|net|org|kr|biz)', '*', cleaned)
+    # 날짜 패턴
+    cleaned = re.sub(r'\d{4}[-/]\d{2}[-/]\d{2}', '*', cleaned)
+    cleaned = re.sub(r'\d{1,2}월\s*\d{1,2}일', '*', cleaned)
+    # 숫자 (금액, ID 등)
+    cleaned = re.sub(r'\d{3,}', '*', cleaned)
+    # 연속 공백 정리
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    
+    # 4. 너무 길면 앞부분만
+    if len(cleaned) > 30:
+        cleaned = cleaned[:30] + "..."
+    
+    result = f"{prefix} {cleaned}".strip() if prefix else cleaned
+    return result if result else "일반 메일"
+
+
 def save_user_silent_preference(user_id: str, sender: str, subject: Optional[str] = None) -> bool:
     """
-    사용자가 특정 발신자나 유형의 메일을 '알림 불필요'로 지정했음을 저장.
+    사용자가 특정 발신자의 특정 유형 메일을 '알림 불필요'로 지정했음을 저장.
+    subject에서 유형 패턴을 추출하여 저장.
     """
     db = _get_firestore_client()
     if db is None:
         return False
     
     try:
-        # User ID와 Sender, Subject를 조합하여 고유한 문서 ID 생성
+        # 제목에서 유형 패턴 추출
+        type_pattern = extract_email_type_pattern(subject)
+        
+        # User ID와 Sender, 유형 패턴을 조합하여 고유한 문서 ID 생성
         import hashlib
-        combined = f"{user_id}_{sender}_{subject or ''}"
+        combined = f"{user_id}_{sender}_{type_pattern}"
         doc_id = hashlib.sha256(combined.encode()).hexdigest()[:32]
         
         doc_ref = db.collection(COLLECTION_USER_FEEDBACK).document(doc_id)
@@ -97,12 +183,13 @@ def save_user_silent_preference(user_id: str, sender: str, subject: Optional[str
         doc_data = {
             "user_id": user_id,
             "sender": sender,
-            "subject_pattern": subject,  # 선택사항: 특정 제목 패턴
+            "subject_pattern": type_pattern,  # 추출된 유형 패턴
+            "original_subject": subject[:200] if subject else None,  # 원본 제목 (디버깅용)
             "preference": "silent",
             "created_at": datetime.utcnow().isoformat()
         }
         doc_ref.set(doc_data)
-        logger.info(f"Saved user preference: {user_id} wants silent for {sender} (type: {subject})")
+        logger.info(f"Saved user preference: {user_id} wants silent for {sender} (type: {type_pattern})")
         return True
     except Exception as e:
         logger.warning(f"Failed to save user preference: {e}")
@@ -112,6 +199,7 @@ def save_user_silent_preference(user_id: str, sender: str, subject: Optional[str
 def delete_user_silent_preference(user_id: str, sender: str, subject: Optional[str] = None) -> bool:
     """
     사용자가 이전에 차단했던 선호도를 삭제 (알림 다시 받기).
+    subject에서 유형 패턴을 추출하여 매칭.
     """
     db = _get_firestore_client()
     if db is None:
@@ -119,11 +207,13 @@ def delete_user_silent_preference(user_id: str, sender: str, subject: Optional[s
     
     try:
         import hashlib
-        combined = f"{user_id}_{sender}_{subject or ''}"
+        # 제목에서 유형 패턴 추출 (저장할 때와 동일한 방식)
+        type_pattern = extract_email_type_pattern(subject)
+        combined = f"{user_id}_{sender}_{type_pattern}"
         doc_id = hashlib.sha256(combined.encode()).hexdigest()[:32]
         
         db.collection(COLLECTION_USER_FEEDBACK).document(doc_id).delete()
-        logger.info(f"Deleted user preference (Undo Silent): {user_id} now accepts {sender} (type: {subject})")
+        logger.info(f"Deleted user preference (Undo Silent): {user_id} now accepts {sender} (type: {type_pattern})")
         return True
     except Exception as e:
         logger.warning(f"Failed to delete user preference: {e}")

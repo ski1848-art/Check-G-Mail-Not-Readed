@@ -174,8 +174,23 @@ You are an expert email triage AI. Your goal is to decide whether an incoming em
 
 ### 3. PERSONALIZED MUTING (IMPORTANT)
 Users can "mute" specific types of emails. You will be provided with a list of "muted patterns".
-- **CRITICAL RULE**: Do not block the sender entirely. Only silence the notification if the *current email* matches the *nature and type* of the muted pattern.
-- If an email is generally NOTIFY-worthy but matches a user's muted pattern, include that user in `user_overrides` with "silent".
+
+**HOW MUTING WORKS:**
+- Each muted pattern has: `sender` (email address) and `type_pattern` (extracted email type)
+- The `type_pattern` is a normalized description of the email type (e.g., "채용 지원 알림", "도메인 기간연장 안내")
+
+**MATCHING RULES:**
+1. Check if the current email's sender matches a muted sender
+2. If sender matches, check if the current email's TYPE/PURPOSE matches the muted type_pattern
+3. Type matching should be semantic, not exact string match:
+   - "[그리팅] 채용 지원 알림" matches any job application notification from 그리팅
+   - "[NHN Domain] 도메인 기간연장 안내" matches any domain renewal notice from NHN
+   - "뉴스레터" matches any newsletter-type email
+
+**CRITICAL RULES:**
+- Do NOT block the sender entirely - only block emails of the SAME TYPE
+- If sender matches but type is DIFFERENT, still NOTIFY (e.g., 결제 실패 vs 도메인 연장)
+- If an email matches a user's muted pattern, include that user in `user_overrides` with "silent"
 
 ### 4. 3-LINE SUMMARY (TL;DR)
 - If the email is **NOTIFY**, generate a **3-line summary** of the content in **KOREAN**.
@@ -220,10 +235,14 @@ Zero missed critical signals. Personal email domains are NOT a reason to lower i
         
         if user_preferences_map:
             prompt += "\n\n### USER MUTED PATTERNS (Personalization)\n"
-            prompt += "The following users have muted specific types of emails in the past. If the current email matches a user's muted nature (sender + subject type), set their override to 'silent'.\n"
+            prompt += "The following users have muted specific EMAIL TYPES. Match by TYPE/PURPOSE, not exact subject.\n"
             for user_id, prefs in user_preferences_map.items():
                 prompt += f"- User: {user_id}\n"
                 for pref in prefs:
-                    prompt += f"  - Muted Sender: {pref.get('sender')}, Muted Subject: {pref.get('subject_pattern', 'N/A')}\n"
+                    type_pattern = pref.get('subject_pattern', 'N/A')
+                    prompt += f"  - Muted Sender: {pref.get('sender')}\n"
+                    prompt += f"    Muted Type: {type_pattern}\n"
+                    if pref.get('original_subject'):
+                        prompt += f"    (Example: {pref.get('original_subject')[:50]}...)\n"
             
         return prompt

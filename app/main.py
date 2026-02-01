@@ -165,7 +165,7 @@ def trigger_notification():
             if learn:
                 for tid in target_ids:
                     if tid.startswith('U'):
-                        delete_user_silent_preference(user_id=tid, sender=event.sender)
+                        delete_user_silent_preference(user_id=tid, sender=event.sender, subject=event.subject)
             
             # 2. DB 업데이트 (reason 포함)
             from app.services.learning_store import _get_firestore_client, COLLECTION_EMAIL_EVENTS
@@ -193,26 +193,29 @@ def block_notification():
         data = request.json
         email_id = data.get('email_id')
         
-        from app.services.learning_store import get_email_event, save_user_silent_preference
+        from app.services.learning_store import get_email_event, save_user_silent_preference, extract_email_type_pattern
         event_dict = get_email_event(email_id)
         if not event_dict: return jsonify({"status": "error", "message": "Event not found"}), 404
 
         sender = event_dict.get('from_email')
+        subject = event_dict.get('subject')  # 제목도 가져오기
         target_ids = event_dict.get('slack_targets', [])
 
-        # 1. 학습: 발신자를 차단 리스트에 추가
+        # 1. 학습: 발신자 + 유형 패턴을 차단 리스트에 추가
         if sender and target_ids:
+            type_pattern = extract_email_type_pattern(subject)
             for tid in target_ids:
                 if tid.startswith('U'):
-                    save_user_silent_preference(user_id=tid, sender=sender)
+                    save_user_silent_preference(user_id=tid, sender=sender, subject=subject)
         
         # 2. DB 업데이트 (reason 포함)
         from app.services.learning_store import _get_firestore_client, COLLECTION_EMAIL_EVENTS
         db = _get_firestore_client()
         if db:
+            type_pattern = extract_email_type_pattern(subject)
             db.collection(COLLECTION_EMAIL_EVENTS).document(email_id).update({
                 "final_category": "silent",
-                "reason": f"관리자가 수동으로 차단 처리함 (발신자: {sender})",
+                "reason": f"관리자가 수동으로 차단 처리함 (발신자: {sender}, 유형: {type_pattern})",
                 "manually_blocked": True,
                 "blocked_at": datetime.utcnow()
             })
@@ -388,10 +391,11 @@ def slack_interactive():
                 # 백그라운드에서 모든 처리 수행
                 def process_silent_forever(uid, snd, subj, resp_url, orig_blocks):
                     try:
-                        # 1. 학습 저장
-                        from app.services.learning_store import save_user_silent_preference
-                        save_user_silent_preference(user_id=uid, sender=snd)
-                        logger.info(f"[SLACK] Saved silent preference for {uid}, {snd}")
+                        # 1. 학습 저장 (subject 포함하여 유형 패턴 추출)
+                        from app.services.learning_store import save_user_silent_preference, extract_email_type_pattern
+                        save_user_silent_preference(user_id=uid, sender=snd, subject=subj)
+                        type_pattern = extract_email_type_pattern(subj)
+                        logger.info(f"[SLACK] Saved silent preference for {uid}, {snd}, type: {type_pattern}")
                         
                         # 2. 원래 메시지 블록 유지하면서 버튼만 교체
                         new_blocks = []
@@ -430,7 +434,7 @@ def slack_interactive():
                                     "elements": [
                                         {
                                             "type": "mrkdwn",
-                                            "text": "🔕 *알림 차단됨* — 이 발신자의 비슷한 유형 메일 알림을 차단했습니다."
+                                            "text": f"🔕 *알림 차단됨* — `{type_pattern}` 유형의 메일 알림을 차단했습니다."
                                         }
                                     ]
                                 })
@@ -469,9 +473,10 @@ def slack_interactive():
                 
                 def process_undo_silent(uid, snd, subj, resp_url, orig_blocks):
                     try:
-                        from app.services.learning_store import delete_user_silent_preference
-                        delete_user_silent_preference(user_id=uid, sender=snd)
-                        logger.info(f"[SLACK] Deleted silent preference for {uid}, {snd}")
+                        from app.services.learning_store import delete_user_silent_preference, extract_email_type_pattern
+                        delete_user_silent_preference(user_id=uid, sender=snd, subject=subj)
+                        type_pattern = extract_email_type_pattern(subj)
+                        logger.info(f"[SLACK] Deleted silent preference for {uid}, {snd}, type: {type_pattern}")
                         
                         # 원래 메시지 블록 유지하면서 상태 변경
                         new_blocks = []
