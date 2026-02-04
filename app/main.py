@@ -456,7 +456,7 @@ def slack_interactive():
                 else:
                     # response_url이 없으면 동기 응답 (fallback)
                     from app.services.learning_store import save_user_silent_preference
-                    save_user_silent_preference(user_id=user_id, sender=sender)
+                    save_user_silent_preference(user_id=user_id, sender=sender, subject=subject)
                     return jsonify({
                         "replace_original": True,
                         "text": f"🔕 `{sender}` 발신자의 알림을 차단했습니다."
@@ -542,7 +542,7 @@ def slack_interactive():
                     return '', 200
                 else:
                     from app.services.learning_store import delete_user_silent_preference
-                    delete_user_silent_preference(user_id=user_id, sender=sender)
+                    delete_user_silent_preference(user_id=user_id, sender=sender, subject=subject)
                     return jsonify({
                         "replace_original": True,
                         "text": f"✅ `{sender}` 발신자의 알림 차단이 해제되었습니다."
