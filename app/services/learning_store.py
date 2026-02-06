@@ -235,6 +235,55 @@ def get_user_silent_preferences(user_id: str) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"Failed to get user preferences: {e}")
         return []
+
+
+def should_silence_for_user(user_id: str, sender: str, subject: str) -> bool:
+    """
+    사용자의 차단 목록과 현재 메일을 비교하여 차단 여부를 규칙 기반으로 판단.
+    LLM에 의존하지 않고 직접 매칭.
+    
+    Returns:
+        True: 이 사용자에게 알림 보내지 않아야 함
+        False: 정상적으로 알림 보내도 됨
+    """
+    prefs = get_user_silent_preferences(user_id)
+    if not prefs:
+        return False
+    
+    current_pattern = extract_email_type_pattern(subject)
+    current_sender = (sender or "").lower().strip()
+    
+    for pref in prefs:
+        pref_sender = (pref.get("sender") or "").lower().strip()
+        pref_pattern = pref.get("subject_pattern")
+        
+        # 발신자가 다르면 스킵
+        if pref_sender != current_sender:
+            continue
+        
+        # subject_pattern이 null인 경우 (이전 코드로 저장된 데이터)
+        # → 발신자만 일치하면 차단 (하위 호환)
+        if not pref_pattern:
+            logger.info(f"[SILENCE] User {user_id}: sender match (legacy null pattern) for {sender}")
+            return True
+        
+        # 유형 패턴 매칭
+        if pref_pattern == current_pattern:
+            logger.info(f"[SILENCE] User {user_id}: exact pattern match '{current_pattern}' for {sender}")
+            return True
+        
+        # 부분 매칭 (패턴의 핵심 키워드가 현재 패턴에 포함되는지)
+        # 예: "도메인 기간연장 안내" vs "[NHN Domain] 도메인 기간연장 안내"
+        pref_keywords = set(pref_pattern.replace("[", "").replace("]", "").split())
+        current_keywords = set(current_pattern.replace("[", "").replace("]", "").split())
+        
+        # 핵심 키워드 3개 이상 겹치면 같은 유형으로 판단
+        overlap = pref_keywords & current_keywords
+        if len(overlap) >= 3:
+            logger.info(f"[SILENCE] User {user_id}: keyword overlap match ({overlap}) for {sender}")
+            return True
+    
+    return False
 def save_email_event_snapshot(
     email_id: str,
     subject: str,

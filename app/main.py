@@ -265,12 +265,23 @@ def process_single_event(event) -> ProcessedResult:
     final_targets = []
     user_overrides = analysis.raw_data.get("user_overrides", {}) if analysis.raw_data else {}
     
+    # ✅ 규칙 기반 차단: LLM 결과와 무관하게 사용자 차단 목록 직접 체크
+    from app.services.learning_store import should_silence_for_user
+    
     for target in targets:
+        # 1. 규칙 기반 차단 (최우선)
+        if target.target_type == "user" and should_silence_for_user(target.target_id, event.sender, event.subject):
+            logger.info(f"[{event.message_id[:30]}] Target {target.target_id} silenced by rule-based preference")
+            continue
+        
+        # 2. LLM user_overrides (보조)
         if target.target_id in user_overrides:
             if user_overrides[target.target_id] == "silent": continue
             elif user_overrides[target.target_id] == "notify":
                 final_targets.append(target)
                 continue
+        
+        # 3. 기본: 분석 결과에 따라
         if analysis.category == ImportanceCategory.NOTIFY:
             final_targets.append(target)
 
