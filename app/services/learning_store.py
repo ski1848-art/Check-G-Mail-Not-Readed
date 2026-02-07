@@ -262,10 +262,11 @@ def should_silence_for_user(user_id: str, sender: str, subject: str) -> bool:
             continue
         
         # subject_pattern이 null인 경우 (이전 코드로 저장된 데이터)
-        # → 발신자만 일치하면 차단 (하위 호환)
+        # → 규칙 기반으로는 판단 불가, LLM에 위임 (skip)
+        # 주의: 여기서 return True 하면 해당 발신자의 모든 메일이 차단됨
         if not pref_pattern:
-            logger.info(f"[SILENCE] User {user_id}: sender match (legacy null pattern) for {sender}")
-            return True
+            logger.info(f"[SILENCE] User {user_id}: skipping legacy null pattern for {sender} (delegating to LLM)")
+            continue
         
         # 유형 패턴 매칭
         if pref_pattern == current_pattern:
@@ -277,10 +278,12 @@ def should_silence_for_user(user_id: str, sender: str, subject: str) -> bool:
         pref_keywords = set(pref_pattern.replace("[", "").replace("]", "").split())
         current_keywords = set(current_pattern.replace("[", "").replace("]", "").split())
         
-        # 핵심 키워드 3개 이상 겹치면 같은 유형으로 판단
+        # 핵심 키워드 겹침으로 같은 유형 판단
+        # 짧은 패턴(2~3단어)도 매칭되도록: 양쪽 모두 2단어 이상이면 2개 겹침으로 충분
         overlap = pref_keywords & current_keywords
-        if len(overlap) >= 3:
-            logger.info(f"[SILENCE] User {user_id}: keyword overlap match ({overlap}) for {sender}")
+        min_overlap = 2 if min(len(pref_keywords), len(current_keywords)) <= 3 else 3
+        if len(overlap) >= min_overlap and len(overlap) >= 2:
+            logger.info(f"[SILENCE] User {user_id}: keyword overlap match ({overlap}, threshold={min_overlap}) for {sender}")
             return True
     
     return False
