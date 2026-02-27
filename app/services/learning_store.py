@@ -132,6 +132,15 @@ def extract_email_type_pattern(subject: Optional[str]) -> str:
         (r'.*newsletter.*', '뉴스레터'),
         (r'.*프로모션.*', '프로모션'),
         (r'.*할인.*', '프로모션'),
+
+        # 영문 서비스 상태 알림 (status notifications)
+        (r'.*(incident|outage|degradation|disruption).*', '서비스 장애 알림'),
+        (r'.*(resolved|recovery|restored|postmortem).*', '서비스 복구 알림'),
+        (r'.*investigating.*', '서비스 장애 알림'),
+        (r'.*(scheduled maintenance|maintenance window).*', '정기 점검 안내'),
+        (r'.*status update.*', '서비스 상태 업데이트'),
+        (r'.*service (alert|notification|update).*', '서비스 상태 업데이트'),
+        (r'.*(uptime|downtime) (alert|notification).*', '서비스 상태 업데이트'),
     ]
     
     rest_lower = rest.lower()

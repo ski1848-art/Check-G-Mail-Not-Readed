@@ -4,6 +4,7 @@ import argparse
 import hmac
 import hashlib
 import threading
+import time
 import requests
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
@@ -29,11 +30,19 @@ logger = get_logger("main")
 # Initialize Flask app
 app = Flask(__name__)
 
+def _get_cors_origins():
+    raw = (Config.CORS_ALLOWED_ORIGINS or "*").strip()
+    if raw == "*" or raw == "":
+        return "*"
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
 # Enable CORS
+_cors_origins = _get_cors_origins()
 CORS(app, resources={
-    r"/slack/*": {"origins": "*"},
-    r"/trigger-notification": {"origins": "*"},
-    r"/block-notification": {"origins": "*"}
+    r"/slack/*": {"origins": _cors_origins},
+    r"/trigger-notification": {"origins": _cors_origins},
+    r"/block-notification": {"origins": _cors_origins},
+    r"/run-batch": {"origins": _cors_origins}
 })
 
 # Initialize services
@@ -52,16 +61,67 @@ DRY_RUN = args.dry_run
 if DRY_RUN:
     logger.info("⚠️ RUNNING IN DRY-RUN MODE. No notifications will be sent.")
 
+def _require_internal_auth():
+    if not Config.FEATURE_REQUIRE_INTERNAL_TOKEN:
+        return True, ""
+    if not Config.INTERNAL_AUTH_TOKEN:
+        logger.error("Internal auth is enabled but INTERNAL_AUTH_TOKEN is missing.")
+        return False, "internal_auth_not_configured"
+    token = request.headers.get("X-Internal-Token", "")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            token = auth.split(" ", 1)[1].strip()
+    if not token or not hmac.compare_digest(token, Config.INTERNAL_AUTH_TOKEN):
+        return False, "unauthorized"
+    return True, ""
+
+def _verify_slack_signature():
+    if not Config.FEATURE_SLACK_SIGNATURE_VERIFY:
+        return True, ""
+    if not Config.SLACK_SIGNING_SECRET:
+        logger.error("Slack signature verification enabled but SLACK_SIGNING_SECRET is missing.")
+        return False, "missing_signing_secret"
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    signature = request.headers.get("X-Slack-Signature", "")
+    if not timestamp or not signature:
+        return False, "missing_signature"
+    try:
+        ts = int(timestamp)
+    except ValueError:
+        return False, "invalid_timestamp"
+    if abs(time.time() - ts) > 60 * 5:
+        return False, "timestamp_out_of_range"
+    body = request.get_data(as_text=True)
+    base_string = f"v0:{timestamp}:{body}"
+    computed = "v0=" + hmac.new(
+        Config.SLACK_SIGNING_SECRET.encode(),
+        base_string.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(computed, signature):
+        return False, "signature_mismatch"
+    return True, ""
+
 def get_gmail_service():
     global gmail_service
     if gmail_service is None:
         gmail_service = GmailService()
     return gmail_service
 
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "ok"}), 200
+
 @app.route('/run-batch', methods=['POST'])
 def run_batch():
     try:
         logger.info("Starting batch processing...")
+        
+        auth_ok, auth_reason = _require_internal_auth()
+        if not auth_ok:
+            logger.warning(f"Batch unauthorized: {auth_reason}")
+            return jsonify({"status": "error", "message": "Unauthorized"}), 401
         
         # ✅ 시스템 상태 체크 (일시 중지 또는 한도 초과 시 즉시 리턴)
         from app.services.settings_store import SettingsStore
@@ -121,6 +181,11 @@ def run_batch():
 def trigger_notification():
     """알림 수동 전송 및 '앞으로 알림 받기' 학습"""
     try:
+        auth_ok, auth_reason = _require_internal_auth()
+        if not auth_ok:
+            logger.warning(f"Manual trigger unauthorized: {auth_reason}")
+            return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
         data = request.json
         email_id = data.get('email_id')
         target_ids = data.get('target_ids', [])
@@ -190,6 +255,11 @@ def trigger_notification():
 def block_notification():
     """알림 수동 차단 및 '앞으로 무시' 학습"""
     try:
+        auth_ok, auth_reason = _require_internal_auth()
+        if not auth_ok:
+            logger.warning(f"Manual block unauthorized: {auth_reason}")
+            return jsonify({"status": "error", "message": "Unauthorized"}), 401
+
         data = request.json
         email_id = data.get('email_id')
         
@@ -229,6 +299,23 @@ def process_single_event(event) -> ProcessedResult:
     targets = router.get_targets(event)
     if not targets:
         return ProcessedResult(event=event, analysis=AnalysisResult(score=0.0, category=ImportanceCategory.SILENT, reason="알림 대상자 없음", source=AnalysisSource.RULE), targets=[], notification_sent=False)
+
+    if Config.FEATURE_ENFORCE_LIMITS_DURING_BATCH:
+        from app.services.settings_store import SettingsStore
+        settings = SettingsStore()
+        enabled, reason = settings.is_system_enabled()
+        if not enabled:
+            return ProcessedResult(
+                event=event,
+                analysis=AnalysisResult(
+                    score=0.0,
+                    category=ImportanceCategory.SILENT,
+                    reason=f"배치 중단: {reason}",
+                    source=AnalysisSource.RULE
+                ),
+                targets=[],
+                notification_sent=False
+            )
 
     # ✅ 중복 체크: LLM 호출 전에 이미 처리된 메일인지 확인 (비용 절감)
     from app.services.learning_store import get_user_silent_preferences, get_email_event
@@ -292,6 +379,11 @@ def process_single_event(event) -> ProcessedResult:
     logger.info(f"[{event.message_id[:30]}] Snapshot check: is_new={is_new}, category={analysis.category.value}, cached={bool(existing_event)}, should_save={should_save}")
     
     if should_save:
+        input_tokens = None
+        output_tokens = None
+        cache_read_tokens = None
+        cache_write_tokens = None
+        cost_usd = None
         try:
             from app.services.learning_store import save_email_event_snapshot
             # 토큰 사용량 추출
@@ -300,6 +392,16 @@ def process_single_event(event) -> ProcessedResult:
             cache_read_tokens = llm_usage.get("cache_read_tokens") if llm_usage else None
             cache_write_tokens = llm_usage.get("cache_write_tokens") if llm_usage else None
             
+            cache_read = cache_read_tokens or 0
+            cache_write = cache_write_tokens or 0
+            if llm_usage and (input_tokens or output_tokens):
+                cost_usd = (
+                    (input_tokens or 0) * Config.LLM_PRICE_INPUT_PER_1M
+                    + (output_tokens or 0) * Config.LLM_PRICE_OUTPUT_PER_1M
+                    + cache_read * Config.LLM_PRICE_CACHE_READ_PER_1M
+                    + cache_write * Config.LLM_PRICE_CACHE_WRITE_PER_1M
+                ) / 1_000_000
+
             result = save_email_event_snapshot(
                 email_id=event.message_id, subject=event.subject,
                 from_email=event.sender, from_domain=event.sender.split('@')[-1] if '@' in event.sender else "",
@@ -321,11 +423,9 @@ def process_single_event(event) -> ProcessedResult:
             logger.info(f"[{event.message_id[:30]}] Snapshot save result: {result}, tokens: in={input_tokens}, out={output_tokens}")
             
             # ✅ 일일 사용량 업데이트 (LLM 호출이 있었던 경우만)
-            if llm_usage and (input_tokens or output_tokens):
+            if llm_usage and (input_tokens or output_tokens) and cost_usd is not None:
                 from app.services.settings_store import SettingsStore
                 settings = SettingsStore()
-                # 비용 계산 (Claude Haiku 4.5 기준)
-                cost_usd = ((input_tokens or 0) * 0.80 + (output_tokens or 0) * 4.00) / 1_000_000
                 settings.increment_daily_usage(
                     calls=1,
                     cost_usd=cost_usd,
@@ -334,6 +434,18 @@ def process_single_event(event) -> ProcessedResult:
                 )
         except Exception as e:
             logger.warning(f"Snapshot error for {event.message_id[:30]}: {e}")
+            if Config.FEATURE_USAGE_INCREMENT_ON_SNAPSHOT_FAILURE and cost_usd is not None:
+                try:
+                    from app.services.settings_store import SettingsStore
+                    settings = SettingsStore()
+                    settings.increment_daily_usage(
+                        calls=1,
+                        cost_usd=cost_usd,
+                        input_tokens=input_tokens or 0,
+                        output_tokens=output_tokens or 0
+                    )
+                except Exception as inner_e:
+                    logger.warning(f"Failed to increment usage after snapshot error: {inner_e}")
 
     if not final_targets: return ProcessedResult(event=event, analysis=analysis, targets=[], notification_sent=False)
     
@@ -376,6 +488,11 @@ def slack_interactive():
         return '', 204
     
     try:
+        verify_ok, verify_reason = _verify_slack_signature()
+        if not verify_ok:
+            logger.warning(f"[SLACK] Signature verification failed: {verify_reason}")
+            return '', 401
+
         payload_raw = request.form.get('payload')
         if not payload_raw: 
             return '', 400

@@ -128,24 +128,46 @@ class GmailService:
     
     def _fetch_unread_for_user(self, user_email: str, max_results: int = 50) -> List[GmailEvent]:
         gmail_client = self._get_gmail_client_for_user(user_email)
-        query = 'is:unread in:inbox newer_than:1d'
+        lookback_days = max(1, Config.GMAIL_QUERY_LOOKBACK_DAYS) if Config.FEATURE_GMAIL_PAGINATION else 1
+        query = f'is:unread in:inbox newer_than:{lookback_days}d'
         events = []
         try:
-            response = gmail_client.users().messages().list(userId='me', q=query, maxResults=max_results).execute()
-            messages = response.get('messages', [])
-            for msg_ref in messages:
-                message = gmail_client.users().messages().get(
-                    userId='me', id=msg_ref['id'], format='metadata',
-                    metadataHeaders=['From', 'To', 'Subject', 'Date', 'Message-ID']
-                ).execute()
-                event = self._parse_gmail_message(message, user_email)
-                if event: events.append(event)
+            page_token = None
+            pages = 0
+            max_pages = max(1, Config.GMAIL_MAX_PAGES_PER_USER) if Config.FEATURE_GMAIL_PAGINATION else 1
+            while True:
+                params = {
+                    "userId": "me",
+                    "q": query,
+                    "maxResults": max_results
+                }
+                if page_token:
+                    params["pageToken"] = page_token
+                response = gmail_client.users().messages().list(**params).execute()
+                messages = response.get('messages', [])
+                for msg_ref in messages:
+                    message = gmail_client.users().messages().get(
+                        userId='me', id=msg_ref['id'], format='metadata',
+                        metadataHeaders=['From', 'To', 'Subject', 'Date', 'Message-ID']
+                    ).execute()
+                    event = self._parse_gmail_message(message, user_email)
+                    if event: events.append(event)
+                pages += 1
+                page_token = response.get('nextPageToken')
+                if not Config.FEATURE_GMAIL_PAGINATION or not page_token or pages >= max_pages:
+                    break
         except Exception as e:
             logger.error(f"Gmail API error for {user_email}: {e}")
         return events
     
     def _parse_gmail_message(self, message: dict, owner_email: str) -> Optional[GmailEvent]:
         try:
+            # SPAM / TRASH 레이블이 있는 메일은 알림 대상에서 제외
+            label_ids = message.get('labelIds', [])
+            if 'SPAM' in label_ids or 'TRASH' in label_ids:
+                logger.debug(f"Skipping message {message['id']} with labels {label_ids} for {owner_email}")
+                return None
+
             headers = message.get('payload', {}).get('headers', [])
             header_dict = {h['name'].lower(): h['value'] for h in headers}
             subject = header_dict.get('subject', '(제목 없음)')
@@ -163,7 +185,9 @@ class GmailService:
                 owner=owner_email, event_type='UNREAD',
                 raw_data={'gmail_id': message['id'], 'snippet': message.get('snippet', '')}
             )
-        except Exception: return None
+        except Exception as e:
+            logger.warning(f"Failed to parse Gmail message for {owner_email}: {e}")
+            return None
 
     def _parse_activity(self, activity: dict) -> Optional[GmailEvent]:
         try:
@@ -181,7 +205,9 @@ class GmailService:
                 sender=sender, owner=owner_email, event_type=events_list[0].get('name', ''),
                 raw_data=activity
             )
-        except Exception: return None
+        except Exception as e:
+            logger.warning(f"Failed to parse activity event: {e}")
+            return None
     
     def is_message_unread(self, message_id: str, user_email: str) -> bool:
         try:
@@ -198,18 +224,31 @@ class GmailService:
     def mark_as_read(self, message_id: str, user_email: str) -> bool:
         """
         Mark a Gmail message as read by removing the UNREAD label.
+        Searches across all mailboxes including SPAM/TRASH.
         """
         try:
             gmail_client = self._get_gmail_client_for_user(user_email)
             internal_msg_id = message_id
             if message_id.startswith('<') or '@' in message_id:
+                # includeSpamTrash=True 로 스팸함/휴지통 포함 검색
                 query = f'rfc822msgid:{message_id}'
-                results = gmail_client.users().messages().list(userId='me', q=query, maxResults=1).execute()
+                results = gmail_client.users().messages().list(
+                    userId='me', q=query, maxResults=1, includeSpamTrash=True
+                ).execute()
                 msgs = results.get('messages', [])
                 if not msgs:
-                    logger.warning(f"Message {message_id} not found to mark as read for {user_email}")
+                    logger.warning(f"Message {message_id} not found (including spam/trash) for {user_email}")
                     return False
                 internal_msg_id = msgs[0]['id']
+            else:
+                # 내부 ID로 직접 조회해서 존재 여부 확인 (스팸함 포함)
+                try:
+                    gmail_client.users().messages().get(
+                        userId='me', id=internal_msg_id, format='minimal'
+                    ).execute()
+                except Exception:
+                    logger.warning(f"Message {message_id} not accessible for {user_email}")
+                    return False
 
             gmail_client.users().messages().modify(
                 userId='me',

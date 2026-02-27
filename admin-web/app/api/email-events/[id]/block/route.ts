@@ -25,11 +25,13 @@ export async function POST(
     const eventData = doc.data();
     
     // Flask 백엔드로 차단 및 학습 요청
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (process.env.INTERNAL_AUTH_TOKEN) {
+      headers["X-Internal-Token"] = process.env.INTERNAL_AUTH_TOKEN;
+    }
     const response = await fetch(`${FLASK_SERVICE_URL}/block-notification`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         email_id: email_id
       }),

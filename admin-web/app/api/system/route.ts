@@ -115,9 +115,13 @@ export async function POST(req: NextRequest) {
       case "run_batch": {
         // 수동 배치 실행
         try {
+          const headers: Record<string, string> = { "Content-Type": "application/json" };
+          if (process.env.INTERNAL_AUTH_TOKEN) {
+            headers["X-Internal-Token"] = process.env.INTERNAL_AUTH_TOKEN;
+          }
           const response = await fetch(`${BACKEND_URL}/run-batch`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
           });
           const result = await response.json();
           
@@ -164,4 +168,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
-

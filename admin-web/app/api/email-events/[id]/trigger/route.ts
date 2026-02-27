@@ -27,11 +27,13 @@ export async function POST(
     const eventData = doc.data();
     
     // 2. Flask 백엔드로 알림 전송 요청
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (process.env.INTERNAL_AUTH_TOKEN) {
+      headers["X-Internal-Token"] = process.env.INTERNAL_AUTH_TOKEN;
+    }
     const response = await fetch(`${FLASK_SERVICE_URL}/trigger-notification`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         email_id: email_id,
         target_ids: eventData?.slack_targets || []

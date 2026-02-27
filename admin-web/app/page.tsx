@@ -416,7 +416,7 @@ export default function DashboardPage() {
             </div>
             <div className="flex justify-between border-b border-gray-800 pb-2">
               <span>AI 엔진</span>
-              <span className="text-gray-100 font-mono">AWS Bedrock (Claude 3.5 Haiku)</span>
+              <span className="text-gray-100 font-mono">AWS Bedrock (Claude Haiku 4.5)</span>
             </div>
             <div className="pt-4 text-xs text-gray-500">
               * 데이터는 Firestore에서 실시간으로 집계됩니다.
