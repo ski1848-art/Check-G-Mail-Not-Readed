@@ -44,6 +44,7 @@ export default function EventsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [triggeringId, setTriggeringId] = useState<string | null>(null);
   const [blockingId, setBlockingId] = useState<string | null>(null);
+  const [error, setError] = useState(false);
   
   // 자동 새로고침 관련 상태 (기본 ON, 30초)
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -83,16 +84,19 @@ export default function EventsPage() {
           'Cache-Control': 'no-cache'
         }
       });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      
+
       if (Array.isArray(data)) {
         setEvents(data);
+        setError(false);
       } else {
         console.error("API error or unexpected format:", data);
-        setEvents([]); // 에러 발생 시 빈 배열로 초기화하여 크래시 방지
+        setError(true); // 형식 오류 = 장애 (기존 표시 데이터는 유지)
       }
-    } catch (error) {
-      console.error("Failed to fetch events:", error);
+    } catch (err) {
+      console.error("Failed to fetch events:", err);
+      setError(true);
     } finally {
       if (!isAuto) setLoading(false);
     }
@@ -255,7 +259,18 @@ export default function EventsPage() {
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        {error && (
+          <div role="alert" className="mb-4 flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+            <span className="text-sm font-medium text-red-700">⚠️ 목록을 불러오지 못했습니다. 표시된 내용은 이전 데이터일 수 있습니다.</span>
+            <button onClick={() => fetchEvents()} className="text-sm font-semibold text-red-700 underline hover:text-red-800">다시 시도</button>
+          </div>
+        )}
+        {!loading && !error && (
+          <p className="mb-3 text-xs text-gray-400">최근 100건 중 {filteredEvents.length}건 표시 · 검색·필터는 이 100건 안에서만 적용됩니다.</p>
+        )}
+
+        {/* 데스크톱: 표 */}
+        <div className="hidden md:block overflow-x-auto rounded-xl border border-gray-200 bg-white">
           <table className="table w-full border-collapse">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200 text-left">
@@ -275,7 +290,7 @@ export default function EventsPage() {
                     데이터를 불러오는 중...
                   </td>
                 </tr>
-              ) : filteredEvents.length === 0 ? (
+              ) : !error && filteredEvents.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="h-32 text-center text-gray-500">
                     표시할 이력이 없습니다.
@@ -381,6 +396,48 @@ export default function EventsPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* 모바일: 카드뷰 */}
+        <div className="md:hidden space-y-3">
+          {loading ? (
+            <div className="py-10 text-center text-sm text-gray-500">데이터를 불러오는 중...</div>
+          ) : !error && filteredEvents.length === 0 ? (
+            <div className="py-10 text-center text-sm text-gray-500">표시할 이력이 없습니다.</div>
+          ) : (
+            filteredEvents.map((event) => (
+              <div key={event.id} className="rounded-xl border border-gray-200 bg-white p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="font-semibold text-gray-900 text-sm line-clamp-2">{event.subject || "(제목 없음)"}</div>
+                  {event.final_category === "notify" ? (
+                    <span className="shrink-0 inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">알림</span>
+                  ) : (
+                    <span className="shrink-0 inline-flex items-center rounded-full bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">무시</span>
+                  )}
+                </div>
+                <div className="mt-2 space-y-1 text-[11px] text-gray-500">
+                  <div className="flex items-center gap-1"><Mail className="h-3 w-3" /> {event.from_email}</div>
+                  <div className="flex items-center gap-1 font-medium text-blue-600"><User className="h-3 w-3" /> {event.to_email}</div>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-3 text-[11px] text-gray-500">
+                    <span>{event.timestamp ? format(new Date(event.timestamp), "MM/dd HH:mm", { locale: ko }) : "-"}</span>
+                    <span>AI {event.llm_score_raw?.toFixed(2) || "0.00"}</span>
+                    <button onClick={() => setSelectedEvent(event)} className="text-indigo-600 underline">사유</button>
+                  </div>
+                  {event.final_category === "silent" ? (
+                    <button onClick={() => handleManualTrigger(event.id)} disabled={triggeringId === event.id} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold ${triggeringId === event.id ? 'bg-gray-100 text-gray-400' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                      <Bell className="h-3 w-3" /> {triggeringId === event.id ? '전송 중' : '알림 전송'}
+                    </button>
+                  ) : (
+                    <button onClick={() => handleManualBlock(event.id)} disabled={blockingId === event.id} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border ${blockingId === event.id ? 'bg-gray-100 text-gray-400 border-gray-200' : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-red-50 hover:text-red-600'}`}>
+                      <BellOff className="h-3 w-3" /> {blockingId === event.id ? '처리 중' : '앞으로 차단'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

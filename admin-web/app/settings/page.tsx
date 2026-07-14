@@ -11,7 +11,7 @@
  */
 "use client";
 import { useState, useEffect } from "react";
-import { Root as Slider } from "@radix-ui/react-slider";
+import { Slider } from "@/components/ui/slider";
 import { RotateCcw, Save, BrainCircuit, Clock, ShieldCheck, Plus, X, AlertTriangle } from "lucide-react";
 import { useToast } from "@/components/ui/toast";
 
@@ -44,12 +44,15 @@ export default function SettingsPage() {
   }, []);
 
   const fetchSettings = async () => {
+    setLoading(true);
     try {
       const res = await fetch("/api/settings");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setSettings(data);
     } catch (error) {
       console.error("Failed to fetch settings:", error);
+      setSettings(null);
     } finally {
       setLoading(false);
     }
@@ -96,7 +99,13 @@ export default function SettingsPage() {
     });
   };
 
-  if (loading || !settings) return <div className="p-8 text-center">설정을 불러오는 중...</div>;
+  if (loading) return <div className="p-8 text-center text-gray-500">설정을 불러오는 중...</div>;
+  if (!settings) return (
+    <div className="p-8 text-center">
+      <p className="font-medium text-red-700">⚠️ 설정을 불러오지 못했습니다.</p>
+      <button onClick={fetchSettings} className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">다시 시도</button>
+    </div>
+  );
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-20">

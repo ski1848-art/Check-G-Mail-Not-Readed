@@ -81,6 +81,8 @@ export default function DashboardPage() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<{ action: string; title: string; message: string } | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   const fetchSystemStatus = async () => {
     try {
@@ -100,22 +102,31 @@ export default function DashboardPage() {
     } else if (status === "authenticated") {
       // 기존 통계, 비용 통계, 시스템 상태를 병렬로 가져오기
       Promise.all([
-        fetch("/api/stats").then(res => res.json()),
-        fetch("/api/stats/cost").then(res => res.json()),
+        fetch("/api/stats").then(res => res.ok ? res.json() : Promise.reject(new Error("stats"))),
+        fetch("/api/stats/cost").then(res => res.ok ? res.json() : Promise.reject(new Error("cost"))),
         fetch("/api/system").then(res => res.ok ? res.json() : null)
       ])
         .then(([statsData, costData, sysData]) => {
           setStats(statsData);
           setCostStats(costData);
           setSystemStatus(sysData);
+          setLoadError(false);
           setLoading(false);
         })
         .catch(err => {
           console.error("Failed to fetch stats:", err);
+          setLoadError(true);
           setLoading(false);
         });
     }
   }, [status, router]);
+
+  useEffect(() => {
+    if (!pendingAction) return;
+    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setPendingAction(null); };
+    document.addEventListener("keydown", onEsc);
+    return () => document.removeEventListener("keydown", onEsc);
+  }, [pendingAction]);
 
   const handleSystemAction = async (action: string) => {
     setActionLoading(action);
@@ -152,6 +163,24 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8">
+      {pendingAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setPendingAction(null)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-msg" className="card p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+            <h3 id="confirm-title" className="text-lg font-bold text-gray-900">{pendingAction.title}</h3>
+            <p id="confirm-msg" className="mt-2 text-sm text-gray-600">{pendingAction.message}</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button onClick={() => setPendingAction(null)} className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium transition-colors">취소</button>
+              <button onClick={() => { const a = pendingAction.action; setPendingAction(null); handleSystemAction(a); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-colors">확인</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {loadError && (
+        <div role="alert" className="flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+          <span className="text-sm font-medium text-red-700">⚠️ 일부 정보를 불러오지 못했습니다. 아래 숫자가 실제와 다를 수 있습니다.</span>
+          <button onClick={() => window.location.reload()} className="text-sm font-semibold text-red-700 underline hover:text-red-800">새로고침</button>
+        </div>
+      )}
       <div>
         <h1 className="text-3xl font-bold text-gray-900">대시보드</h1>
         <p className="text-gray-600">Gmail Notifier 서비스의 현재 상태를 확인합니다.</p>
@@ -186,13 +215,15 @@ export default function DashboardPage() {
           <p className="mt-2 text-xs text-amber-600 font-medium">불필요한 메일 자동 분류 중</p>
         </div>
 
-        <div className="card p-6 border-l-4 border-purple-600">
+        <div className={`card p-6 border-l-4 ${systemStatus == null ? 'border-amber-400' : systemStatus.enabled ? 'border-green-600' : 'border-red-600'}`}>
           <p className="text-sm font-medium text-gray-500 uppercase tracking-wider">시스템 상태</p>
           <div className="flex items-center gap-2 mt-2">
-            <span className="h-3 w-3 rounded-full bg-green-500 animate-pulse"></span>
-            <span className="text-2xl font-bold text-gray-900">{stats?.systemStatus}</span>
+            <span className={`h-3 w-3 rounded-full ${systemStatus == null ? 'bg-amber-400' : systemStatus.enabled ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
+            <span className="text-2xl font-bold text-gray-900">{systemStatus == null ? '확인 실패' : systemStatus.enabled ? '실행 중' : '일시 중지'}</span>
           </div>
-          <p className="mt-2 text-xs text-gray-500">시스템 정상 연결됨</p>
+          <p className={`mt-2 text-xs font-medium ${systemStatus == null ? 'text-amber-600' : systemStatus.enabled ? 'text-gray-500' : 'text-red-600'}`}>
+            {systemStatus == null ? '⚠️ 상태를 불러오지 못했습니다' : systemStatus.enabled ? '알림 정상 발송 중' : '⚠️ 알림이 멈춰 있습니다'}
+          </p>
         </div>
       </div>
 
@@ -240,7 +271,7 @@ export default function DashboardPage() {
               {systemStatus.enabled ? (
                 <>
                   <button
-                    onClick={() => handleSystemAction("pause")}
+                    onClick={() => setPendingAction({ action: "pause", title: "전체 알림을 일시 중지할까요?", message: "모든 사용자에게 가는 Gmail 알림 발송이 멈춥니다. 다시 시작하기 전까지 알림이 오지 않습니다." })}
                     disabled={actionLoading === "pause"}
                     className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 font-medium flex items-center gap-2 transition-colors"
                   >
@@ -251,7 +282,7 @@ export default function DashboardPage() {
                     )}
                   </button>
                   <button
-                    onClick={() => handleSystemAction("run_batch")}
+                    onClick={() => setPendingAction({ action: "run_batch", title: "지금 수동으로 실행할까요?", message: "즉시 메일을 조회해 분류·알림을 실행합니다. 이미 처리된 메일은 중복 알림되지 않습니다." })}
                     disabled={actionLoading === "run_batch"}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium flex items-center gap-2 transition-colors"
                   >
