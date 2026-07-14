@@ -30,3 +30,10 @@ build/
 .idea/
 .cursor/
 .tools/
+
+# Test / build caches & temp
+.hypothesis/
+.pytest_cache/
+.playwright-mcp/
+temp/
+*.tsbuildinfo
