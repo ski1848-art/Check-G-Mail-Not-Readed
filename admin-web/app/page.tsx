@@ -1,9 +1,22 @@
+/**
+ * page.tsx (/) - 대시보드 메인 페이지
+ * 
+ * [표시 정보]
+ *   1. 통계 카드: 전체 사용자, 오늘 알림/무시 건수, 시스템 상태
+ *   2. 시스템 제어 리모컨: 일시중지/재시작/수동 배치 실행 + 일일 한도 게이지
+ *   3. AI 비용 모니터링: 월별 토큰 사용량, 비용(USD/KRW), 캐시 적중률, 일별 차트
+ *   4. 빠른 작업: 사용자 추가, 모니터링, 변경 이력, 설정 바로가기
+ *   5. 서비스 정보: 버전, AI 엔진, 스케줄 주기 등
+ * 
+ * [데이터 소스]
+ *   /api/stats, /api/stats/cost, /api/system 을 병렬 호출
+ */
 "use client";
-
-import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
+import { useToast } from "@/components/ui/toast";
 
 interface Stats {
   totalUsers: number;
@@ -62,6 +75,7 @@ interface SystemStatus {
 export default function DashboardPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { toast } = useToast();
   const [stats, setStats] = useState<Stats | null>(null);
   const [costStats, setCostStats] = useState<CostStats | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
@@ -115,14 +129,14 @@ export default function DashboardPage() {
       const data = await res.json();
       
       if (res.ok) {
-        alert(data.message);
+        toast(data.message, "success");
         fetchSystemStatus();
       } else {
-        alert(data.message || "오류가 발생했습니다.");
+        toast(data.message || "오류가 발생했습니다.", "error");
       }
     } catch (err) {
       console.error("Action failed:", err);
-      alert("요청 실패. 네트워크를 확인하세요.");
+      toast("요청 실패. 네트워크를 확인하세요.", "error");
     } finally {
       setActionLoading(null);
     }
@@ -167,9 +181,9 @@ export default function DashboardPage() {
           <p className="text-sm font-medium text-gray-500 uppercase tracking-wider">오늘 무시된 메일</p>
           <div className="flex items-baseline gap-2 mt-2">
             <span className="text-3xl font-bold text-gray-900">{stats?.silencedToday || 0}</span>
-            <span className="text-sm text-gray-500">건 제외</span>
+            <span className="text-sm text-gray-500">건 무시</span>
           </div>
-          <p className="mt-2 text-xs text-amber-600 font-medium">노이즈 필터링 정상 작동 중</p>
+          <p className="mt-2 text-xs text-amber-600 font-medium">불필요한 메일 자동 분류 중</p>
         </div>
 
         <div className="card p-6 border-l-4 border-purple-600">
@@ -178,7 +192,7 @@ export default function DashboardPage() {
             <span className="h-3 w-3 rounded-full bg-green-500 animate-pulse"></span>
             <span className="text-2xl font-bold text-gray-900">{stats?.systemStatus}</span>
           </div>
-          <p className="mt-2 text-xs text-gray-500">Cloud Run & Firestore 연결됨</p>
+          <p className="mt-2 text-xs text-gray-500">시스템 정상 연결됨</p>
         </div>
       </div>
 
@@ -208,7 +222,7 @@ export default function DashboardPage() {
                   <p className="text-sm text-gray-600">
                     마지막 배치: {systemStatus.lastBatchAt 
                       ? new Date(systemStatus.lastBatchAt).toLocaleString('ko-KR') 
-                      : '없음'} 
+                      : '-'}
                     ({systemStatus.lastBatchProcessed}건 처리)
                   </p>
                 ) : (
@@ -385,7 +399,7 @@ export default function DashboardPage() {
             </Link>
             <Link href="/events" className="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed border-gray-200 hover:border-blue-500 hover:bg-blue-50 transition-all group">
               <span className="text-2xl mb-2 group-hover:scale-110 transition-transform">🔍</span>
-              <span className="text-sm font-semibold">실시간 모니터링</span>
+              <span className="text-sm font-semibold">메일 모니터링</span>
             </Link>
             <Link href="/audit" className="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed border-gray-200 hover:border-blue-500 hover:bg-blue-50 transition-all group">
               <span className="text-2xl mb-2 group-hover:scale-110 transition-transform">📜</span>
@@ -416,10 +430,10 @@ export default function DashboardPage() {
             </div>
             <div className="flex justify-between border-b border-gray-800 pb-2">
               <span>AI 엔진</span>
-              <span className="text-gray-100 font-mono">AWS Bedrock (Claude 3.5 Haiku)</span>
+              <span className="text-gray-100 font-mono">AWS Bedrock (Claude Haiku 4.5)</span>
             </div>
             <div className="pt-4 text-xs text-gray-500">
-              * 데이터는 Firestore에서 실시간으로 집계됩니다.
+              * 데이터는 실시간으로 집계됩니다.
             </div>
           </div>
         </div>

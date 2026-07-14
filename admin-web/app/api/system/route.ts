@@ -1,15 +1,21 @@
+/**
+ * /api/system - 시스템 제어 API (긴급 중지/재시작/수동 배치 실행)
+ * 
+ * [GET]  시스템 상태 + 오늘 사용량 조회
+ * [POST] 시스템 제어 액션 실행
+ *   - action: "pause"     → 시스템 일시 중지 (다음 배치부터 스킵)
+ *   - action: "resume"    → 시스템 재시작
+ *   - action: "run_batch" → 수동 배치 실행 (Flask 백엔드 /run-batch 호출)
+ *   - action: "set_limits" → 일일 AI 호출/비용 한도 변경
+ * 
+ * [Firestore 구조]
+ *   system_control/status: { enabled, paused_at, daily_limit_calls, daily_limit_cost_usd, ... }
+ *   daily_usage/{YYYY-MM-DD}: { calls, cost_usd, input_tokens, output_tokens }
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { getDb } from "@/lib/firebase-admin";
-
-export const dynamic = 'force-dynamic';
-
-const SYSTEM_CONTROL_COLLECTION = "system_control";
-const SYSTEM_CONTROL_DOC = "status";
-const DAILY_USAGE_COLLECTION = "daily_usage";
-
-// 백엔드 서비스 URL
-const BACKEND_URL = process.env.BACKEND_SERVICE_URL || "https://gmail-notifier-165856206700.asia-northeast3.run.app";
+import { SYSTEM_CONTROL_COLLECTION, SYSTEM_CONTROL_DOC, DAILY_USAGE_COLLECTION, BACKEND_URL } from "@/lib/constants";
 
 /**
  * GET /api/system - 시스템 상태 조회

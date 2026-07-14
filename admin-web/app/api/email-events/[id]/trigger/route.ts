@@ -1,12 +1,19 @@
+/**
+ * POST /api/email-events/[id]/trigger - 수동 알림 전송 API
+ * 
+ * 관리자가 모니터링 페이지에서 "알림 전송" 버튼 클릭 시 호출.
+ * Flask 백엔드의 /trigger-notification 엔드포인트로 요청을 프록시.
+ * 
+ * [동작]
+ *   1. Firestore에서 해당 이메일 이벤트 조회
+ *   2. Flask 백엔드로 알림 전송 요청 (slack_targets 포함)
+ *   3. audit_logs에 MANUAL_NOTIFICATION_TRIGGER 기록
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { getDb } from "@/lib/firebase-admin";
+import { FLASK_SERVICE_URL } from "@/lib/constants";
 
-// Flask 서비스 URL (환경변수에서 가져오거나 기본값 사용)
-const FLASK_SERVICE_URL = process.env.FLASK_SERVICE_URL || "https://gmail-notifier-165856206700.asia-northeast3.run.app";
-
-// POST /api/email-events/[id]/trigger
-// 관리자가 수동으로 특정 메일의 알림을 전송하도록 요청
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -21,7 +28,7 @@ export async function POST(
     // 1. 해당 메일 이벤트 정보 조회 (대상자 확인용)
     const doc = await db.collection("email_events").doc(email_id).get();
     if (!doc.exists) {
-      return NextResponse.json({ error: "Event not found" }, { status: 404 });
+      return NextResponse.json({ error: "메일 정보를 찾을 수 없습니다" }, { status: 404 });
     }
 
     const eventData = doc.data();
@@ -41,7 +48,7 @@ export async function POST(
     const result = await response.json();
 
     if (!response.ok) {
-      throw new Error(result.message || "Failed to trigger notification on backend");
+      throw new Error(result.message || "알림 전송에 실패했습니다");
     }
 
     // 3. Audit Log 기록

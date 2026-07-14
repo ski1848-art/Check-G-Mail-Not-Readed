@@ -1,17 +1,22 @@
+/**
+ * GET /api/stats - 대시보드 통계 API
+ * 
+ * [반환 데이터]
+ *   - totalUsers / activeUsers: 전체/활성 사용자 수
+ *   - totalProcessedToday: 오늘 처리된 메일 수 (KST 기준)
+ *   - notifiedToday / silencedToday: 알림 전송/무시 건수
+ *   - systemStatus: 시스템 상태 ("Healthy")
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { getDb } from "@/lib/firebase-admin";
-
-export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const db = getDb();
-  
   try {
-    // KST(UTC+9) 기준으로 '오늘' 시작 시각 계산
     const now = new Date();
     const kstOffset = 9 * 60 * 60 * 1000;
     const kstNow = new Date(now.getTime() + kstOffset);

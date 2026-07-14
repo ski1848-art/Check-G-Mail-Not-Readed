@@ -1,11 +1,18 @@
+/**
+ * GET /api/email-events - 이메일 처리 이력 조회 (모니터링 페이지용)
+ * 
+ * [쿼리 파라미터]
+ *   - limit: 조회 건수 (기본 50)
+ *   - category: 'notify' | 'silent' | 'all'
+ *   - date: 'YYYY-MM-DD' (KST 기준 필터)
+ * 
+ * [응답 보강]
+ *   - slack_targets_with_names: Slack User ID → 표시 이름 매핑 추가
+ *   - Firestore 복합 인덱스 오류 시 메모리 필터링으로 폴백
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { getDb } from "@/lib/firebase-admin";
-
-export const dynamic = 'force-dynamic';
-
-// GET /api/email-events
-// 전체 메일 처리 이력 조회 (모니터링용)
 export async function GET(req: NextRequest) {
   const session = await getServerSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

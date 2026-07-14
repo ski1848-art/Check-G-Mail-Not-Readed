@@ -1,6 +1,16 @@
+/**
+ * audit/page.tsx - 변경 이력(감사 로그) 페이지
+ * 
+ * [표시 정보]
+ *   - 액션 유형 (생성/수정/삭제) 배지
+ *   - 대상 Slack User ID
+ *   - 실행자 이메일, 시간
+ *   - 상세 정보 (JSON 펼치기)
+ * 
+ * [데이터 소스] /api/audit-logs (GET, 최근 200건)
+ */
 "use client";
-
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function AuditPage() {
   const [logs, setLogs] = useState<any[]>([]);
@@ -34,6 +44,14 @@ export default function AuditPage() {
         return <span className="badge badge-info">수정</span>;
       case "DELETE":
         return <span className="badge badge-danger">삭제</span>;
+      case "UPDATE_SYSTEM_SETTINGS":
+        return <span className="badge badge-info">설정 변경</span>;
+      case "DELETE_PREFERENCE":
+        return <span className="badge badge-warning">차단 해제</span>;
+      case "MANUAL_NOTIFICATION_TRIGGER":
+        return <span className="badge badge-success">수동 알림 전송</span>;
+      case "MANUAL_NOTIFICATION_BLOCK":
+        return <span className="badge badge-danger">수동 차단</span>;
       default:
         return <span className="badge badge-gray">{action}</span>;
     }

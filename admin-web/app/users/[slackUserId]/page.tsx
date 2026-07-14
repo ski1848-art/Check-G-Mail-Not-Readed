@@ -1,12 +1,28 @@
+/**
+ * users/[slackUserId]/page.tsx - 사용자 상세 설정 및 이력 페이지
+ * 
+ * [3개 섹션]
+ *   1. 기본 정보 편집: Slack ID(읽기전용), 표시 이름, Gmail 계정, 활성 상태
+ *   2. 최근 알림 이력: 이 사용자에게 전송된 최근 50건 (시간, 발신자, 제목, 결과)
+ *   3. 사용자 차단 목록: Slack에서 "알림 끄기"한 발신자 목록 + 관리자 해제 기능
+ * 
+ * [API 호출]
+ *   - GET /api/routing-rules/[slackUserId] (기본 정보)
+ *   - GET /api/routing-rules/[slackUserId]/preferences (차단 목록)
+ *   - GET /api/routing-rules/[slackUserId]/history (알림 이력)
+ *   - PUT /api/routing-rules/[slackUserId] (수정)
+ *   - DELETE /api/routing-rules/[slackUserId] (삭제)
+ */
 "use client";
-
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
+import { useToast } from "@/components/ui/toast";
 
 interface Preference {
   id: string;
   sender: string;
+  subject_pattern?: string;
   created_at: string;
 }
 
@@ -21,6 +37,7 @@ interface NotificationHistory {
 export default function EditUserPage() {
   const router = useRouter();
   const params = useParams();
+  const { toast } = useToast();
   const slackUserId = params.slackUserId as string;
 
   const [formData, setFormData] = useState({
@@ -77,11 +94,11 @@ export default function EditUserPage() {
   const handleAddGmail = () => {
     if (!newGmail) return;
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newGmail)) {
-      alert("올바른 이메일 형식이 아닙니다");
+      toast("올바른 이메일 형식이 아닙니다", "error");
       return;
     }
     if (formData.gmail_accounts.includes(newGmail.toLowerCase())) {
-      alert("이미 등록된 이메일입니다");
+      toast("이미 등록된 이메일입니다", "error");
       return;
     }
     setFormData({
@@ -111,10 +128,10 @@ export default function EditUserPage() {
         router.push("/users");
       } else {
         const error = await res.json();
-        alert(`저장 실패: ${error.error}`);
+        toast(`저장 실패: ${error.error}`, "error");
       }
     } catch (err) {
-      alert("오류가 발생했습니다");
+      toast("오류가 발생했습니다", "error");
     } finally {
       setSubmitting(false);
     }
@@ -128,10 +145,10 @@ export default function EditUserPage() {
       if (res.ok) {
         router.push("/users");
       } else {
-        alert("삭제 실패");
+        toast("삭제 실패", "error");
       }
     } catch (err) {
-      alert("오류 발생");
+      toast("오류 발생", "error");
     }
   };
 
@@ -145,10 +162,10 @@ export default function EditUserPage() {
       if (res.ok) {
         setPreferences(preferences.filter(p => p.sender !== sender));
       } else {
-        alert("해제 실패");
+        toast("해제 실패", "error");
       }
     } catch (err) {
-      alert("오류 발생");
+      toast("오류 발생", "error");
     }
   };
 
@@ -200,7 +217,7 @@ export default function EditUserPage() {
               </div>
 
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-700">표시 이름</label>
+                <label className="block text-sm font-medium text-gray-700">이름</label>
                 <input
                   type="text"
                   placeholder="예: 홍길동"
@@ -340,6 +357,9 @@ export default function EditUserPage() {
                   <div key={pref.id} className="flex items-center justify-between p-3 rounded-lg bg-white border border-amber-200 shadow-sm">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-900 truncate">{pref.sender}</p>
+                      <p className="text-[11px] text-gray-600 truncate">
+                        유형: {pref.subject_pattern || "전체 메일"}
+                      </p>
                       <p className="text-[10px] text-gray-400">차단일: {new Date(pref.created_at).toLocaleDateString()}</p>
                     </div>
                     <button

@@ -1,11 +1,19 @@
+/**
+ * POST /api/email-events/[id]/block - 수동 차단 + 학습 API
+ * 
+ * 관리자가 모니터링 페이지에서 "앞으로 차단" 버튼 클릭 시 호출.
+ * Flask 백엔드의 /block-notification 엔드포인트로 요청을 프록시.
+ * 
+ * [동작]
+ *   1. Firestore에서 해당 이메일 이벤트 조회
+ *   2. Flask 백엔드로 차단 요청 (발신자+유형 패턴 학습)
+ *   3. audit_logs에 MANUAL_NOTIFICATION_BLOCK 기록
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { getDb } from "@/lib/firebase-admin";
+import { FLASK_SERVICE_URL } from "@/lib/constants";
 
-const FLASK_SERVICE_URL = process.env.FLASK_SERVICE_URL || "https://gmail-notifier-165856206700.asia-northeast3.run.app";
-
-// POST /api/email-events/[id]/block
-// 관리자가 수동으로 특정 메일을 차단하고 학습시키도록 요청
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -19,7 +27,7 @@ export async function POST(
   try {
     const doc = await db.collection("email_events").doc(email_id).get();
     if (!doc.exists) {
-      return NextResponse.json({ error: "Event not found" }, { status: 404 });
+      return NextResponse.json({ error: "메일 정보를 찾을 수 없습니다" }, { status: 404 });
     }
 
     const eventData = doc.data();
@@ -38,7 +46,7 @@ export async function POST(
     const result = await response.json();
 
     if (!response.ok) {
-      throw new Error(result.message || "Failed to block notification on backend");
+      throw new Error(result.message || "차단 처리에 실패했습니다");
     }
 
     // Audit Log 기록

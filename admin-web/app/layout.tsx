@@ -1,15 +1,26 @@
+/**
+ * layout.tsx - 루트 레이아웃 (서버 컴포넌트)
+ * 
+ * [역할]
+ *   - 전체 앱의 HTML 구조 및 글로벌 스타일 적용
+ *   - 로그인된 사용자에게만 상단 네비게이션 바 표시
+ *   - SessionProvider로 클라이언트 세션 관리
+ * 
+ * [네비게이션 메뉴]
+ *   사용자 | 모니터링 | 변경 이력 | 시스템 설정
+ */
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { getServerSession } from "next-auth";
-import Link from "next/link";
 import { Providers } from "@/components/providers";
+import { Navigation } from "@/app/components/Navigation";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Gmail Notifier Admin",
-  description: "Management Console for Gmail Notifier",
+  title: "Gmail Notifier 관리자",
+  description: "Gmail Notifier 관리 콘솔",
 };
 
 export default async function RootLayout({
@@ -23,43 +34,7 @@ export default async function RootLayout({
     <html lang="ko">
       <body className={inter.className}>
         <Providers>
-          {session && (
-            <nav className="sticky top-0 z-50 border-b border-gray-200 bg-white shadow-sm">
-              <div className="container mx-auto px-6">
-                <div className="flex h-16 items-center justify-between">
-                  <div className="flex items-center gap-8">
-                    <Link href="/" className="flex items-center gap-2">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 shadow-md text-white text-xl">
-                        📧
-                      </div>
-                      <span className="text-lg font-bold text-gray-900">Notifier Admin</span>
-                    </Link>
-                    <div className="flex items-center gap-1">
-                      <Link href="/users" className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                        사용자
-                      </Link>
-                      <Link href="/events" className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                        모니터링
-                      </Link>
-                      <Link href="/audit" className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                        변경 이력
-                      </Link>
-                      <Link href="/settings" className="px-3 py-2 text-sm font-medium text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                        시스템 설정
-                      </Link>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <span className="text-sm text-gray-600">{session.user?.email}</span>
-                    <Link href="/api/auth/signout" className="text-sm text-gray-500 hover:text-red-600 transition-colors">
-                      로그아웃
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            </nav>
-          )}
-          
+          {session && <Navigation session={session} />}
           <main className="container mx-auto px-6 py-8">
             {children}
           </main>

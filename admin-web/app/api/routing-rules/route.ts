@@ -1,16 +1,26 @@
+/**
+ * /api/routing-rules - 라우팅 규칙 CRUD API
+ * 
+ * [GET]  전체 라우팅 규칙 목록 조회 (updated_at 내림차순)
+ * [POST] 새 라우팅 규칙 생성 (Slack User ID + Gmail 계정 매핑)
+ * 
+ * [Firestore 구조]
+ *   Collection: routing_rules
+ *   Document ID: Slack User ID (예: U04E9PMTLTZ)
+ *   Fields: { slack_user_id, slack_display_name, gmail_accounts[], enabled, created_by, updated_by }
+ * 
+ * 모든 변경은 audit_logs에 자동 기록됨.
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { getDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 
-// Force dynamic rendering
-export const dynamic = 'force-dynamic';
-
 export async function GET(req: NextRequest) {
-  const db = getDb();
   const session = await getServerSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const db = getDb();
   try {
     const snapshot = await db.collection("routing_rules").orderBy("updated_at", "desc").get();
     const rules = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -32,10 +42,10 @@ export async function POST(req: NextRequest) {
 
     // Validation
     if (!slack_user_id || !/^U[A-Z0-9]+$/.test(slack_user_id)) {
-      return NextResponse.json({ error: "Invalid Slack User ID" }, { status: 400 });
+      return NextResponse.json({ error: "Slack User ID 형식이 올바르지 않습니다" }, { status: 400 });
     }
     if (!Array.isArray(gmail_accounts)) {
-      return NextResponse.json({ error: "gmail_accounts must be an array" }, { status: 400 });
+      return NextResponse.json({ error: "gmail_accounts는 배열 형식이어야 합니다" }, { status: 400 });
     }
 
     const data = {

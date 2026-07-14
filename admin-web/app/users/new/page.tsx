@@ -1,11 +1,23 @@
+/**
+ * users/new/page.tsx - 새 사용자 추가 페이지
+ * 
+ * [입력 필드]
+ *   - Slack User ID (필수, U로 시작하는 대문자+숫자)
+ *   - 표시 이름 (선택)
+ *   - Gmail 계정 (복수 등록 가능, 이메일 형식 검증)
+ *   - 알림 활성/비활성 토글
+ * 
+ * [저장] POST /api/routing-rules → Firestore routing_rules에 저장
+ */
 "use client";
-
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useToast } from "@/components/ui/toast";
 
 export default function NewUserPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const [formData, setFormData] = useState({
     slack_user_id: "",
     slack_display_name: "",
@@ -18,11 +30,11 @@ export default function NewUserPage() {
   const handleAddGmail = () => {
     if (!newGmail) return;
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newGmail)) {
-      alert("올바른 이메일 형식이 아닙니다");
+      toast("올바른 이메일 형식이 아닙니다", "error");
       return;
     }
     if (formData.gmail_accounts.includes(newGmail.toLowerCase())) {
-      alert("이미 등록된 이메일입니다");
+      toast("이미 등록된 이메일입니다", "error");
       return;
     }
     setFormData({
@@ -42,7 +54,7 @@ export default function NewUserPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.slack_user_id || !/^U[A-Z0-9]+$/.test(formData.slack_user_id)) {
-      alert("Slack User ID는 U로 시작하는 대문자와 숫자여야 합니다");
+      toast("Slack User ID는 U로 시작하는 대문자와 숫자여야 합니다", "error");
       return;
     }
 
@@ -57,10 +69,10 @@ export default function NewUserPage() {
         router.push("/users");
       } else {
         const error = await res.json();
-        alert(`저장 실패: ${error.error}`);
+        toast(`저장 실패: ${error.error}`, "error");
       }
     } catch (err) {
-      alert("오류가 발생했습니다");
+      toast("오류가 발생했습니다", "error");
     } finally {
       setSubmitting(false);
     }
@@ -95,7 +107,7 @@ export default function NewUserPage() {
         </div>
 
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">표시 이름</label>
+          <label className="block text-sm font-medium text-gray-700">이름</label>
           <input
             type="text"
             placeholder="예: 홍길동"

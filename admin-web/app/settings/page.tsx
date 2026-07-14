@@ -1,17 +1,19 @@
+/**
+ * settings/page.tsx - 시스템 설정 페이지
+ * 
+ * [3개 탭]
+ *   1. AI & 성능: 알림 임계값 슬라이더 (0.1~0.9), 라우팅 캐시 TTL
+ *   2. 키워드 필터: 긴급 키워드 (즉시 알림), 스팸 키워드 (즉시 차단) - 칩 UI
+ *   3. 도메인 정책: 화이트리스트 (우선 알림), 블랙리스트 (즉시 차단) - 칩 UI
+ * 
+ * [저장] PUT /api/settings → Firestore system_settings/general에 merge
+ * [리셋] 서버에서 현재 설정값 다시 로드
+ */
 "use client";
-
 import { useState, useEffect } from "react";
-import { Slider } from "@/components/ui/slider";
-import { 
-  Save, 
-  RotateCcw, 
-  Plus, 
-  X, 
-  ShieldCheck, 
-  AlertTriangle, 
-  BrainCircuit, 
-  Clock
-} from "lucide-react";
+import { Root as Slider } from "@radix-ui/react-slider";
+import { RotateCcw, Save, BrainCircuit, Clock, ShieldCheck, Plus, X, AlertTriangle } from "lucide-react";
+import { useToast } from "@/components/ui/toast";
 
 interface Settings {
   score_threshold_notify: number;
@@ -20,9 +22,12 @@ interface Settings {
   whitelist_domains: string[];
   spam_keywords: string[];
   urgent_keywords: string[];
+  cost_alert_threshold_percent?: number;
+  cost_alert_slack_channel?: string;
 }
 
 export default function SettingsPage() {
+  const { toast } = useToast();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -60,12 +65,12 @@ export default function SettingsPage() {
         body: JSON.stringify(settings),
       });
       if (res.ok) {
-        alert("시스템 설정이 성공적으로 업데이트되었습니다.");
+        toast("시스템 설정이 업데이트되었습니다.", "success");
       } else {
         throw new Error("Failed to save");
       }
     } catch (error) {
-      alert("설정을 저장하는 중 오류가 발생했습니다.");
+      toast("설정을 저장하는 중 오류가 발생했습니다.", "error");
     } finally {
       setSaving(false);
     }
@@ -98,11 +103,11 @@ export default function SettingsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-gray-900">시스템 설정</h1>
-          <p className="text-gray-500 text-sm mt-1">AI 판별 로직 및 필터링 정책을 전역적으로 관리합니다.</p>
+          <p className="text-gray-500 text-sm mt-1">AI 판별 로직 및 필터링 정책을 한 곳에서 관리합니다.</p>
         </div>
         <div className="flex gap-2">
           <button className="btn btn-secondary" onClick={fetchSettings} disabled={saving}>
-            <RotateCcw className="mr-2 h-4 w-4" /> 리셋
+            <RotateCcw className="mr-2 h-4 w-4" /> 취소
           </button>
           <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
             {saving ? "저장 중..." : <><Save className="mr-2 h-4 w-4" /> 모든 설정 저장</>}
@@ -123,11 +128,17 @@ export default function SettingsPage() {
         >
           키워드 필터
         </button>
-        <button 
+        <button
           className={`px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'domains' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
           onClick={() => setActiveTab('domains')}
         >
           도메인 정책
+        </button>
+        <button
+          className={`px-6 py-3 text-sm font-medium transition-colors border-b-2 ${activeTab === 'cost' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+          onClick={() => setActiveTab('cost')}
+        >
+          비용 알림
         </button>
       </div>
 
@@ -141,7 +152,7 @@ export default function SettingsPage() {
             
             <div className="space-y-6 px-2">
               <div className="flex justify-between items-center">
-                <span className="text-sm font-semibold text-gray-700">알림 임계값 (Notification Threshold)</span>
+                <span className="text-sm font-semibold text-gray-700">알림 임계값</span>
                 <span className="text-3xl font-bold text-blue-600">{settings.score_threshold_notify.toFixed(2)}</span>
               </div>
               <Slider 
@@ -165,7 +176,7 @@ export default function SettingsPage() {
             </h3>
             <div className="mt-4 flex items-center gap-6">
               <div className="flex-1">
-                <label className="text-sm font-medium text-gray-700 block mb-1">라우팅 캐시 TTL (초)</label>
+                <label className="text-sm font-medium text-gray-700 block mb-1">설정 반영 주기(초)</label>
                 <input 
                   type="number" 
                   value={settings.routing_cache_ttl}
@@ -174,7 +185,7 @@ export default function SettingsPage() {
                 />
               </div>
               <p className="flex-[2] text-xs text-gray-500 bg-blue-50 p-3 rounded-lg border border-blue-100">
-                Firestore 재조회 주기입니다. 값이 클수록 API 호출 비용이 절감되나, 관리자 웹에서의 변경사항이 알림 서비스에 반영되기까지 시간이 더 걸립니다.
+                설정 반영 주기입니다. 값이 클수록 서버 비용이 줄지만 반영이 느려집니다.
               </p>
             </div>
           </div>
@@ -185,7 +196,7 @@ export default function SettingsPage() {
         <div className="space-y-6">
           <div className="card p-6 border-t-4 border-t-green-500">
             <h3 className="text-lg font-bold flex items-center gap-2 text-green-700 mb-1">
-              <ShieldCheck className="h-5 w-5" /> 무조건 알림 키워드 (Urgent)
+              <ShieldCheck className="h-5 w-5" /> 무조건 알림 키워드
             </h3>
             <p className="text-sm text-gray-500 mb-4">제목에 이 키워드가 포함되면 AI 분석 없이 즉시 알림을 보냅니다.</p>
             <div className="flex gap-2 mb-4">
@@ -211,9 +222,9 @@ export default function SettingsPage() {
 
           <div className="card p-6 border-t-4 border-t-red-500">
             <h3 className="text-lg font-bold flex items-center gap-2 text-red-700 mb-1">
-              <AlertTriangle className="h-5 w-5" /> 무조건 차단 키워드 (Spam)
+              <AlertTriangle className="h-5 w-5" /> 무조건 차단 키워드
             </h3>
-            <p className="text-sm text-gray-500 mb-4">제목에 이 키워드가 포함되면 즉시 필터링합니다.</p>
+            <p className="text-sm text-gray-500 mb-4">제목에 이 키워드가 포함되면 즉시 차단합니다.</p>
             <div className="flex gap-2 mb-4">
               <input 
                 placeholder="새 스팸 키워드 추가..." 
@@ -232,6 +243,56 @@ export default function SettingsPage() {
                   {kw} <X className="ml-1.5 h-3 w-3 cursor-pointer hover:text-red-500" onClick={() => removeChip('spam_keywords', kw)} />
                 </span>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'cost' && (
+        <div className="space-y-6">
+          <div className="card p-6">
+            <h3 className="text-lg font-bold flex items-center gap-2 mb-2">
+              비용 알림 설정
+            </h3>
+            <p className="text-sm text-gray-500 mb-6">일일 비용 한도 대비 임계값에 도달하면 지정된 Slack 채널에 경고 알림을 보냅니다.</p>
+
+            <div className="space-y-6">
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <label className="text-sm font-semibold text-gray-700">알림 임계값 (%)</label>
+                  <span className="text-3xl font-bold text-indigo-600">
+                    {settings.cost_alert_threshold_percent ?? 80}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={10}
+                  max={100}
+                  step={5}
+                  value={settings.cost_alert_threshold_percent ?? 80}
+                  onChange={(e) => setSettings({ ...settings, cost_alert_threshold_percent: parseInt(e.target.value) })}
+                  className="w-full accent-indigo-600"
+                />
+                <div className="flex justify-between text-[11px] text-gray-400 font-medium uppercase tracking-wider">
+                  <span>10% (민감)</span>
+                  <span>100% (한도 초과 시에만)</span>
+                </div>
+                <p className="text-xs text-gray-500 bg-indigo-50 p-3 rounded-lg border border-indigo-100">
+                  예: 80% 설정 시 — 일일 비용 한도의 80%에 도달하면 Slack 채널에 경고 메시지를 전송합니다.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-semibold text-gray-700">관리자 알림 Slack 채널 ID</label>
+                <input
+                  type="text"
+                  placeholder="예: C0123456789"
+                  className="input max-w-sm"
+                  value={settings.cost_alert_slack_channel ?? ""}
+                  onChange={(e) => setSettings({ ...settings, cost_alert_slack_channel: e.target.value })}
+                />
+                <p className="text-xs text-gray-400">Slack 채널 ID (C로 시작하는 코드). 비워두면 알림을 보내지 않습니다.</p>
+              </div>
             </div>
           </div>
         </div>

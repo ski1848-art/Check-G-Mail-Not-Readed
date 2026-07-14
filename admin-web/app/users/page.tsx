@@ -1,6 +1,15 @@
+/**
+ * users/page.tsx - 사용자 관리 목록 페이지
+ * 
+ * [기능]
+ *   - 등록된 모든 Slack 사용자 목록 표시 (Slack ID, 이름, Gmail 계정, 활성 상태)
+ *   - 검색 필터 (Slack ID 또는 이름으로 검색)
+ *   - 사용자 추가/편집 페이지로 이동
+ * 
+ * [데이터 소스] /api/routing-rules (GET)
+ */
 "use client";
-
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 
 export default function UsersPage() {
@@ -93,7 +102,7 @@ export default function UsersPage() {
                 </td>
                 <td>
                   <span className="font-medium text-gray-900">
-                    {user.slack_display_name || <span className="text-gray-400">—</span>}
+                    {user.slack_display_name || <span className="text-gray-400">-</span>}
                   </span>
                 </td>
                 <td>

@@ -1,5 +1,11 @@
+/**
+ * login/page.tsx - 로그인 페이지
+ * 
+ * Google OAuth 로그인 버튼만 제공.
+ * 로그인 성공 시 대시보드(/)로 리다이렉트.
+ * Google Workspace 관리자 계정만 접근 가능 (NextAuth signIn 콜백에서 검증).
+ */
 "use client";
-
 import { signIn } from "next-auth/react";
 
 export default function LoginPage() {
@@ -60,7 +66,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-gray-500">
-          © 2024 Gmail Notifier. All rights reserved.
+          © 2026 Gmail Notifier. All rights reserved.
         </p>
       </div>
     </div>

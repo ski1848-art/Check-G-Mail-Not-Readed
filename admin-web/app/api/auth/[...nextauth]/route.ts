@@ -1,3 +1,11 @@
+/**
+ * NextAuth 인증 설정 - Google OAuth 로그인
+ * 
+ * [접근 제어]
+ *   - ALLOWED_EMAIL_DOMAIN: 특정 도메인 이메일만 허용 (예: hotseller.co.kr)
+ *   - ADMIN_EMAILS: 개별 이메일 화이트리스트 (쉼표 구분)
+ *   - 두 조건 모두 불일치 시 로그인 거부
+ */
 import NextAuth from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 

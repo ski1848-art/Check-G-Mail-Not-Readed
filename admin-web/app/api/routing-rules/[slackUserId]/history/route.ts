@@ -1,11 +1,12 @@
+/**
+ * GET /api/routing-rules/[slackUserId]/history - 사용자별 알림 이력 조회
+ * 
+ * 특정 Slack 사용자에게 전송된 최근 50건의 이메일 알림 이력을 반환.
+ * Firestore email_events에서 slack_targets 배열에 해당 사용자 ID가 포함된 문서를 조회.
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { getDb } from "@/lib/firebase-admin";
-
-export const dynamic = 'force-dynamic';
-
-// GET /api/routing-rules/[slackUserId]/history
-// 사용자의 최근 알림 전송 이력 조회
 export async function GET(
   req: NextRequest,
   { params }: { params: { slackUserId: string } }

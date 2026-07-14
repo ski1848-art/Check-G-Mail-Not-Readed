@@ -1,3 +1,14 @@
+/**
+ * firebase-admin.ts - Firebase Admin SDK 초기화 (서버 사이드 전용)
+ * 
+ * [인증 방식]
+ *   1. GOOGLE_APPLICATION_CREDENTIALS_JSON_BASE64 환경변수 (Base64 인코딩된 서비스 계정 JSON)
+ *   2. 기본 인증 (Cloud Run 메타데이터 서버)
+ * 
+ * [제공 함수]
+ *   - getDb(): Firestore 클라이언트 (lazy init)
+ *   - getAuth(): Firebase Auth 클라이언트 (lazy init)
+ */
 import * as admin from 'firebase-admin';
 
 // Lazy getter functions that initialize on first access

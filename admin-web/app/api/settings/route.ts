@@ -1,11 +1,21 @@
+/**
+ * /api/settings - 시스템 전역 설정 API
+ * 
+ * [GET]  현재 설정값 조회 (Firestore system_settings/general)
+ * [PUT]  설정값 업데이트 (merge 방식, audit_logs에 변경 전/후 기록)
+ * 
+ * [설정 항목]
+ *   - score_threshold_notify: AI 알림 임계값 (0.0~1.0)
+ *   - routing_cache_ttl: 라우팅 캐시 TTL (초)
+ *   - blacklist_domains[]: 차단 도메인 목록
+ *   - whitelist_domains[]: 우선 알림 도메인 목록
+ *   - spam_keywords[]: 스팸 키워드 (제목에 포함 시 즉시 SILENT)
+ *   - urgent_keywords[]: 긴급 키워드 (제목에 포함 시 즉시 NOTIFY)
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { getDb } from "@/lib/firebase-admin";
-
-export const dynamic = 'force-dynamic';
-
-const SETTINGS_COLLECTION = "system_settings";
-const SETTINGS_DOC = "general";
+import { SETTINGS_COLLECTION, SETTINGS_DOC } from "@/lib/constants";
 
 // 기본 설정값
 const DEFAULT_SETTINGS = {

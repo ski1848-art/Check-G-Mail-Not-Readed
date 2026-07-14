@@ -1,18 +1,19 @@
+/**
+ * Navigation.tsx - 상단 네비게이션 바 (클라이언트 컴포넌트)
+ * 
+ * [기능]
+ *   - 데스크탑/모바일 반응형 네비게이션
+ *   - 다크모드 토글 (localStorage 저장)
+ *   - 현재 경로 하이라이트 (usePathname)
+ *   - 사용자 프로필 표시 + 로그아웃 링크
+ * 
+ * 참고: 현재 layout.tsx에서는 이 컴포넌트 대신 인라인 네비게이션을 사용 중.
+ */
 "use client";
-
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, useEffect } from "react";
-import { 
-  Users, 
-  History, 
-  LogOut, 
-  Mail,
-  Sun,
-  Moon,
-  Menu,
-  X
-} from "lucide-react";
+import { Users, Mail, Sun, Moon, X, Menu, LogOut, History, Settings, Activity } from "lucide-react";
 
 interface NavigationProps {
   session: {
@@ -45,14 +46,16 @@ export function Navigation({ session }: NavigationProps) {
   };
 
   const navItems = [
-    { href: "/users", label: "사용자 관리", icon: Users },
+    { href: "/users", label: "사용자", icon: Users },
+    { href: "/events", label: "메일 모니터링", icon: Activity },
     { href: "/audit", label: "변경 이력", icon: History },
+    { href: "/settings", label: "시스템 설정", icon: Settings },
   ];
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
 
   return (
-    <nav className="nav-glass">
+    <nav className="sticky top-0 z-50 border-b border-gray-200 bg-white shadow-sm">
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
           {/* 로고 */}
@@ -61,9 +64,8 @@ export function Navigation({ session }: NavigationProps) {
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent shadow-lg shadow-primary/20 group-hover:shadow-primary/30 transition-shadow">
                 <Mail className="h-5 w-5 text-white" />
               </div>
-              <span className="font-bold text-lg tracking-tight hidden sm:block">
-                <span className="gradient-text">Notifier</span>
-                <span className="text-muted-foreground ml-1">Admin</span>
+              <span className="font-bold text-lg tracking-tight hidden sm:block text-gray-900">
+                Notifier <span className="text-gray-500 font-normal">Admin</span>
               </span>
             </Link>
 
@@ -101,7 +103,7 @@ export function Navigation({ session }: NavigationProps) {
               className="flex h-9 w-9 items-center justify-center rounded-xl 
                          text-muted-foreground hover:text-foreground hover:bg-secondary
                          transition-all duration-200"
-              aria-label="Toggle dark mode"
+              aria-label="다크 모드 전환"
             >
               {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </button>
@@ -117,7 +119,7 @@ export function Navigation({ session }: NavigationProps) {
               {session.user?.image && (
                 <img
                   src={session.user.image}
-                  alt="Profile"
+                  alt="프로필"
                   className="h-9 w-9 rounded-full ring-2 ring-border"
                 />
               )}
@@ -148,7 +150,7 @@ export function Navigation({ session }: NavigationProps) {
 
         {/* 모바일 메뉴 */}
         {mobileMenuOpen && (
-          <div className="md:hidden py-4 border-t border-border animate-fade-in">
+          <div className="md:hidden py-4 border-t border-border">
             <div className="flex flex-col gap-1">
               {navItems.map((item) => {
                 const Icon = item.icon;

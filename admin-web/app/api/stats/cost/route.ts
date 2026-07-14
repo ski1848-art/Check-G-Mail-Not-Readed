@@ -1,11 +1,28 @@
+/**
+ * GET /api/stats/cost - AI 비용 모니터링 API
+ * 
+ * 월별 AI(LLM) 사용량과 비용을 집계하여 반환.
+ * 
+ * [쿼리 파라미터]
+ *   - month: 'YYYY-MM' (기본: 현재 월, KST 기준)
+ * 
+ * [비용 계산]
+ *   Claude Haiku 4.5 (AWS Bedrock) 기준:
+ *   - 입력: $0.80/1M tokens
+ *   - 출력: $4.00/1M tokens
+ *   - 캐시 읽기: $0.08/1M tokens
+ *   - 캐시 쓰기: $1.00/1M tokens
+ *   환경변수로 가격/환율 커스터마이징 가능.
+ * 
+ * [반환 데이터]
+ *   - tokens: 입력/출력/캐시 토큰 합계
+ *   - cost: USD/KRW 비용 (항목별 + 합계)
+ *   - cacheHitRate: 프롬프트 캐시 적중률 (%)
+ *   - dailyBreakdown: 일별 호출 수/비용 (차트용)
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { getDb } from "@/lib/firebase-admin";
-
-export const dynamic = 'force-dynamic';
-
-// Claude Haiku 4.5 (AWS Bedrock) 가격 - 환경변수로 설정 가능
-// 단위: USD per 1M tokens
 const PRICING = {
   input: parseFloat(process.env.LLM_PRICE_INPUT_PER_1M || "0.80"),
   output: parseFloat(process.env.LLM_PRICE_OUTPUT_PER_1M || "4.00"),

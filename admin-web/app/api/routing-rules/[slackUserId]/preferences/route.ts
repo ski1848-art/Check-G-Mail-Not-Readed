@@ -1,11 +1,14 @@
+/**
+ * /api/routing-rules/[slackUserId]/preferences - 사용자 차단 목록 API
+ * 
+ * [GET]    사용자가 Slack에서 "알림 차단"한 발신자/유형 목록 조회
+ * [DELETE] 관리자가 차단을 해제 (sender 쿼리 파라미터 필수)
+ * 
+ * Firestore user_feedback 컬렉션에서 preference="silent"인 문서를 조회.
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { getDb } from "@/lib/firebase-admin";
-
-export const dynamic = 'force-dynamic';
-
-// GET /api/routing-rules/[slackUserId]/preferences
-// 사용자의 수신 거부(Silent) 목록 조회
 export async function GET(
   req: NextRequest,
   { params }: { params: { slackUserId: string } }
