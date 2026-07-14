@@ -1,7 +1,26 @@
+"""
+gmail_service.py - Gmail API 연동 서비스
+
+[인증 방식]
+  Google Workspace 도메인 전체 위임(Domain-wide Delegation)을 사용.
+  서비스 계정이 각 사용자의 Gmail에 대리 접근.
+
+[주요 기능]
+  - fetch_unread_emails(): 등록된 사용자들의 미읽은 메일을 병렬 조회
+  - mark_as_read(): Slack에서 "읽음 처리" 버튼 클릭 시 Gmail UNREAD 라벨 제거
+  - fetch_domain_logs(): Admin SDK Reports API로 도메인 전체 메일 로그 조회 (미사용)
+
+[스코프 분리]
+  - Admin Reports API: admin.reports.audit.readonly (관리자 전용)
+  - Gmail API: gmail.readonly + gmail.modify (사용자별 위임)
+  ※ 비관리자에게 Admin 스코프를 요청하면 403 에러 발생하므로 분리 필수
+"""
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any
 import os
 import json
+import base64
+import re
 import google.auth
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -135,8 +154,7 @@ class GmailService:
             messages = response.get('messages', [])
             for msg_ref in messages:
                 message = gmail_client.users().messages().get(
-                    userId='me', id=msg_ref['id'], format='metadata',
-                    metadataHeaders=['From', 'To', 'Subject', 'Date', 'Message-ID']
+                    userId='me', id=msg_ref['id'], format='full'
                 ).execute()
                 event = self._parse_gmail_message(message, user_email)
                 if event: events.append(event)
@@ -153,17 +171,82 @@ class GmailService:
             message_id = header_dict.get('message-id', message['id'])
             sender = from_header
             if '<' in from_header: sender = from_header.split('<')[1].split('>')[0]
-            
+
             timestamp = datetime.now(timezone.utc)
             if message.get('internalDate'):
                 timestamp = datetime.fromtimestamp(int(message.get('internalDate')) / 1000, tz=timezone.utc)
-            
+
+            body_text = self._extract_body_text(message.get('payload', {}))
+
+            raw_data = {'gmail_id': message['id'], 'snippet': message.get('snippet', '')}
+            if body_text:
+                raw_data['body_text'] = body_text
+
             return GmailEvent(
                 timestamp=timestamp, message_id=message_id, subject=subject, sender=sender,
                 owner=owner_email, event_type='UNREAD',
-                raw_data={'gmail_id': message['id'], 'snippet': message.get('snippet', '')}
+                raw_data=raw_data
             )
         except Exception: return None
+
+    def _extract_body_text(self, payload: dict) -> Optional[str]:
+        """MIME 파트에서 본문 텍스트를 추출. text/plain 우선, text/html 폴백."""
+        plain_text = None
+        html_text = None
+
+        parts = payload.get('parts', [])
+        if not parts:
+            # 단일 파트 메시지 (parts가 없는 경우)
+            mime_type = payload.get('mimeType', '')
+            body_data = payload.get('body', {}).get('data', '')
+            if body_data:
+                decoded = self._decode_base64(body_data)
+                if mime_type == 'text/plain':
+                    return decoded
+                elif mime_type == 'text/html':
+                    return self._strip_html_tags(decoded)
+            return None
+
+        for part in parts:
+            mime_type = part.get('mimeType', '')
+            body_data = part.get('body', {}).get('data', '')
+
+            if mime_type == 'text/plain' and body_data:
+                plain_text = self._decode_base64(body_data)
+            elif mime_type == 'text/html' and body_data:
+                html_text = self._decode_base64(body_data)
+            elif mime_type.startswith('multipart/') and part.get('parts'):
+                # 중첩된 multipart 처리
+                nested = self._extract_body_text(part)
+                if nested:
+                    return nested
+
+        if plain_text:
+            return plain_text
+        if html_text:
+            return self._strip_html_tags(html_text)
+        return None
+
+    @staticmethod
+    def _decode_base64(data: str) -> str:
+        """URL-safe base64 디코딩."""
+        padded = data + '=' * (4 - len(data) % 4) if len(data) % 4 else data
+        return base64.urlsafe_b64decode(padded).decode('utf-8', errors='replace')
+
+    @staticmethod
+    def _strip_html_tags(html: str) -> str:
+        """HTML 태그를 제거하여 plain text로 변환."""
+        text = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'</?p[^>]*>', '\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = re.sub(r'&nbsp;', ' ', text)
+        text = re.sub(r'&amp;', '&', text)
+        text = re.sub(r'&lt;', '<', text)
+        text = re.sub(r'&gt;', '>', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        return text.strip()
 
     def _parse_activity(self, activity: dict) -> Optional[GmailEvent]:
         try:

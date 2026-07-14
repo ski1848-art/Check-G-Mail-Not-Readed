@@ -1,248 +1,341 @@
+"""
+llm_service.py - AI(LLM) 이메일 분석 서비스
+
+[호출 우선순위]
+  1. Token-Watcher v2 (LLM 프록시 게이트웨이) — pass_through_body 방식
+  2. AWS Bedrock 직접 호출 (AnthropicBedrock SDK) — Token-Watcher 장애 시 폴백
+
+[AI 모델]
+  Claude Haiku 4.5 (us.anthropic.claude-haiku-4-5-20251001-v1:0)
+
+[프롬프트 구조]
+  - System: "이메일 분류 AI. JSON만 반환. notify/silent 판단 기준 설명"
+  - User: 메일 제목/발신자/수신자/스니펫 + 사용자별 차단 패턴(MUTED PATTERNS)
+
+[응답 형식]
+  {"score": 0.0~1.0, "category": "notify"|"silent", "reason": "한국어",
+   "summary": "한국어 3줄 요약", "user_overrides": {"U12345": "silent"}}
+"""
 import json
-from typing import Any, Dict, List, Optional
-
+import time
+from typing import Optional
+import httpx
 from anthropic import AnthropicBedrock
-
 from app.config import Config
 from app.models import GmailEvent, AnalysisResult, ImportanceCategory, AnalysisSource
 from app.utils.logger import get_logger
 
 logger = get_logger("llm_service")
 
+ANTHROPIC_VERSION = "bedrock-2023-05-31"
+
+
+class _TokenWatcherError(Exception):
+    """Token Watcher 호출 실패 — 폴백 가능 여부를 can_fallback 속성으로 전달."""
+    def __init__(self, message: str, can_fallback: bool = True):
+        super().__init__(message)
+        self.can_fallback = can_fallback
+
 
 class LLMService:
-    """
-    LLM client that routes to Anthropic Claude 4.5 Haiku via AWS Bedrock.
-    - System 프롬프트는 캐시되고, 사용자 프롬프트에는 메일 정보만 담아 비용을 최소화한다.
-    - last_usage에 토큰/캐시 사용량을 남겨 벤치마크에서 비용 계산에 활용할 수 있다.
-    """
+    TW_FAIL_THRESHOLD = 3
+    TW_CIRCUIT_TIMEOUT = 30
 
     def __init__(self):
         self.model_id = Config.BEDROCK_MODEL_ID
-        self.last_usage: Optional[Dict[str, int]] = None
-        self.client = self._init_client()
-
-    def _init_client(self) -> Optional[AnthropicBedrock]:
-        """AWS Bedrock 클라이언트 초기화 (Anthropic SDK)."""
-        if not (Config.AWS_ACCESS_KEY_ID and Config.AWS_SECRET_ACCESS_KEY):
-            logger.warning("AWS credentials not set. Bedrock LLM calls will be skipped.")
-            return None
-
-        try:
-            return AnthropicBedrock(
-                aws_access_key=Config.AWS_ACCESS_KEY_ID,
-                aws_secret_key=Config.AWS_SECRET_ACCESS_KEY,
-                aws_region=Config.AWS_REGION,
-            )
-        except Exception as exc:
-            logger.error(f"Failed to init AnthropicBedrock client: {exc}")
-            return None
-
-    def analyze_email(self, event: GmailEvent, user_preferences_map: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> AnalysisResult:
-        """
-        Claude 4.5 Haiku 호출 (프롬프트 캐싱 적용).
-        user_preferences_map: { user_id: [ {sender, subject_pattern, ...}, ... ] }
-        """
         self.last_usage = None
+        self.client = self._init_client()
+        self.tw_client = self._init_tw_client()
+        self.tw_model_id = self._extract_model_id()
+        # 서킷브레이커 상태
+        self._tw_fail_count = 0
+        self._tw_circuit_open_until = 0.0
 
-        if not self.client:
-            return AnalysisResult(
-                score=0.0,
-                category=ImportanceCategory.SILENT,
-                reason="AI 분석 서비스 연결 불가 (설정 미비)",
-                source=AnalysisSource.LLM,
-            )
+    def _init_client(self):
+        if not (Config.AWS_ACCESS_KEY_ID and Config.AWS_SECRET_ACCESS_KEY):
+            return None
+        try:
+            return AnthropicBedrock(aws_access_key=Config.AWS_ACCESS_KEY_ID, aws_secret_key=Config.AWS_SECRET_ACCESS_KEY, aws_region=Config.AWS_REGION)
+        except Exception:
+            return None
 
-        system_prompt = self._build_system_prompt()
-        user_prompt = self._build_user_prompt(event, user_preferences_map)
+    def _init_tw_client(self) -> Optional[httpx.Client]:
+        if not (Config.TOKEN_WATCHER_URL and Config.TOKEN_WATCHER_KEY):
+            return None
+        return httpx.Client(timeout=30.0)
+
+    def _extract_model_id(self) -> str:
+        mid = self.model_id
+        if mid.startswith("arn:"):
+            return mid.rsplit("/", 1)[-1]
+        return mid
+
+    # ─── 서킷브레이커 ───────────────────────────────────────
+
+    def _should_use_tw(self) -> bool:
+        if not self.tw_client:
+            return False
+        if self._tw_fail_count >= self.TW_FAIL_THRESHOLD:
+            if time.time() < self._tw_circuit_open_until:
+                logger.info("[CIRCUIT] Token Watcher circuit open, using Bedrock direct")
+                return False
+            logger.info("[CIRCUIT] Token Watcher half-open, retrying")
+        return True
+
+    def _record_tw_failure(self):
+        self._tw_fail_count += 1
+        if self._tw_fail_count >= self.TW_FAIL_THRESHOLD:
+            self._tw_circuit_open_until = time.time() + self.TW_CIRCUIT_TIMEOUT
+            logger.warning(f"[CIRCUIT] Token Watcher circuit OPEN for {self.TW_CIRCUIT_TIMEOUT}s (failures={self._tw_fail_count})")
+
+    def _record_tw_success(self):
+        if self._tw_fail_count > 0:
+            logger.info(f"[CIRCUIT] Token Watcher recovered (was {self._tw_fail_count} failures)")
+        self._tw_fail_count = 0
+        self._tw_circuit_open_until = 0.0
+
+    # ─── 공개 API ────────────────────────────────────────────
+
+    def analyze_email(self, event, user_preferences_map=None):
+        self.last_usage = None
+        sp = self._build_system_prompt()
+        up = self._build_user_prompt(event, user_preferences_map)
+        return self._call_llm(sp, up, max_tokens=512, use_cache=True)
+
+    def summarize_email(self, event) -> Optional[str]:
+        """이메일 요약만 수행 (화이트리스트 경로용 경량 호출)"""
+        sp = "이메일을 한국어로 3줄 이내로 요약하세요. 불릿 포인트(•) 형식으로 각 항목을 줄바꿈하여 작성하세요."
+        sn = event.raw_data.get('snippet', '') if event.raw_data else ''
+        body = ''
+        if event.raw_data and event.raw_data.get('body_text'):
+            body = event.raw_data['body_text'][:500]
+        up = f"Subject: {event.subject or ''}\nSender: {event.sender}\n"
+        if sn:
+            up += f"Snippet: {sn}\n"
+        if body:
+            up += f"Body: {body}"
 
         try:
-            response = self.client.messages.create(
-                model=self.model_id,
-                max_tokens=512,
-                temperature=0.0,
-                system=[
-                    {
-                        "type": "text",
-                        "text": system_prompt,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                messages=[
-                    {"role": "user", "content": [{"type": "text", "text": user_prompt}]}
-                ],
-            )
+            result = self._call_llm_raw(sp, up, max_tokens=150, use_cache=False)
+            return result.strip() if result else None
+        except Exception as e:
+            logger.warning(f"summarize_email failed: {e}")
+        return None
 
-            content_text = "".join(
-                block.text for block in response.content if block.type == "text"
-            ).strip()
-            
-            # Extract JSON more robustly by finding the first '{' and last '}'
+    # ─── LLM 호출 오케스트레이션 ──────────────────────────────
+
+    def _call_llm(self, sp, up, max_tokens=512, use_cache=True) -> AnalysisResult:
+        """analyze_email용: TW v2 → Bedrock 폴백 → 안전 기본값."""
+        # 1) Token Watcher v2 시도
+        if self._should_use_tw():
             try:
-                start_idx = content_text.find('{')
-                end_idx = content_text.rfind('}')
-                if start_idx != -1 and end_idx != -1:
-                    content_text = content_text[start_idx : end_idx + 1]
-                
-                parsed = json.loads(content_text)
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse LLM response as JSON: {e}")
-                logger.error(f"Raw content was: {content_text}")
-                raise e
+                text, usage = self._call_token_watcher(sp, up, max_tokens, use_cache)
+                self._record_tw_success()
+                self.last_usage = usage
+                return self._parse(text)
+            except _TokenWatcherError as e:
+                logger.warning(f"Token Watcher v2 fallback: {e}")
+                self._record_tw_failure()
+                if not e.can_fallback:
+                    return AnalysisResult(score=0.5, category=ImportanceCategory.NOTIFY, reason="AI 분석 실패 - 안전을 위해 알림 전송", source=AnalysisSource.LLM)
+            except Exception as e:
+                logger.warning(f"Token Watcher v2 unexpected error: {e}")
+                self._record_tw_failure()
 
-            score = float(parsed.get("score", 0.0))
-            reason = parsed.get("reason", "사유 미기재")
-            summary = parsed.get("summary") # AI 요약 필드 추출
-            category_str = parsed.get("category", "silent").lower()
-            
-            # Handle user overrides
-            user_overrides = parsed.get("user_overrides", {})
+        # 2) Bedrock 직접 호출 (폴백)
+        return self._call_bedrock(sp, up, max_tokens, use_cache)
 
+    def _call_llm_raw(self, sp, up, max_tokens=150, use_cache=False) -> Optional[str]:
+        """summarize_email용: TW v2 → Bedrock 폴백. 원시 텍스트 반환."""
+        # 1) Token Watcher v2 시도
+        if self._should_use_tw():
             try:
-                # Map old categories or AI quirks to new ones
-                if category_str in ["critical", "important", "normal", "notify"]:
-                    category = ImportanceCategory.NOTIFY
-                else:
-                    category = ImportanceCategory.SILENT
-            except Exception:
-                category = ImportanceCategory.SILENT
+                text, _ = self._call_token_watcher(sp, up, max_tokens, use_cache)
+                self._record_tw_success()
+                return text
+            except _TokenWatcherError as e:
+                logger.warning(f"Token Watcher v2 summarize fallback: {e}")
+                self._record_tw_failure()
+            except Exception as e:
+                logger.warning(f"Token Watcher v2 summarize unexpected: {e}")
+                self._record_tw_failure()
 
-            self.last_usage = self._extract_usage(response)
-
-            return AnalysisResult(
-                score=score,
-                category=category,
-                reason=reason,
-                summary=summary,
-                source=AnalysisSource.LLM,
-                raw_data={"user_overrides": user_overrides}
-            )
-
-        except Exception as exc:
-            logger.error(f"LLM analysis failed: {exc}")
-            return AnalysisResult(
-                score=0.0,
-                category=ImportanceCategory.SILENT,
-                reason=f"AI 분석 오류: {str(exc)}",
-                source=AnalysisSource.LLM,
-            )
-
-    def _extract_usage(self, response: Any) -> Optional[Dict[str, int]]:
-        usage = getattr(response, "usage", None)
-        if not usage:
+        # 2) Bedrock 직접 호출
+        if not self.client:
             return None
+        try:
+            r = self.client.messages.create(
+                model=self.model_id, max_tokens=max_tokens, temperature=0.0,
+                system=[{"type": "text", "text": sp}],
+                messages=[{"role": "user", "content": [{"type": "text", "text": up}]}]
+            )
+            return "".join(b.text for b in r.content if b.type == "text").strip() or None
+        except Exception as e:
+            logger.warning(f"Bedrock summarize failed: {e}")
+        return None
+
+    # ─── Token Watcher v2 ────────────────────────────────────
+
+    def _call_token_watcher(self, sp, up, max_tokens, use_cache) -> tuple:
+        """Token Watcher v2 호출. (text, usage_dict) 반환. 실패 시 _TokenWatcherError."""
+        url = f"{Config.TOKEN_WATCHER_URL}/v1/chat/completions"
+        payload = self._build_tw_payload(sp, up, max_tokens, use_cache)
+        headers = {"Authorization": f"Bearer {Config.TOKEN_WATCHER_KEY}", "Content-Type": "application/json"}
+
+        try:
+            response = self.tw_client.post(url, headers=headers, json=payload)
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            raise _TokenWatcherError(str(e), can_fallback=True)
+
+        # HTTP 에러
+        if response.status_code >= 400:
+            try:
+                data = response.json()
+            except Exception:
+                raise _TokenWatcherError(f"HTTP {response.status_code}: {response.text[:200]}", can_fallback=response.status_code >= 500)
+
+            if "error" in data:
+                provider_status = data.get("provider_status", 0)
+                err_msg = data["error"].get("message", "unknown")
+                can_fallback = provider_status >= 500 or response.status_code >= 500
+                raise _TokenWatcherError(f"TW error: {err_msg} (provider_status={provider_status})", can_fallback=can_fallback)
+
+            raise _TokenWatcherError(f"HTTP {response.status_code}", can_fallback=response.status_code >= 500)
+
+        # 성공 응답 파싱
+        try:
+            data = response.json()
+        except Exception as e:
+            raise _TokenWatcherError(f"JSON decode failed: {e}", can_fallback=True)
+
+        text, usage = self._parse_tw_response(data)
+        logger.info(f"Token Watcher v2 call OK (model={self.tw_model_id}, tokens={usage})")
+        return text, usage
+
+    def _build_tw_payload(self, sp, up, max_tokens, use_cache) -> dict:
+        system_block = {"type": "text", "text": sp}
+        if use_cache:
+            system_block["cache_control"] = {"type": "ephemeral"}
+
         return {
-            "input_tokens": getattr(usage, "input_tokens", 0),
-            "output_tokens": getattr(usage, "output_tokens", 0),
-            "cache_write_tokens": getattr(usage, "cache_creation_input_tokens", 0),
-            "cache_read_tokens": getattr(usage, "cache_read_input_tokens", 0),
-            "model_id": self.model_id,
+            "provider": "bedrock",
+            "model_id": self.tw_model_id,
+            "stream": True,
+            "pass_through_body": {
+                "anthropic_version": ANTHROPIC_VERSION,
+                "max_tokens": max_tokens,
+                "system": [system_block],
+                "messages": [
+                    {"role": "user", "content": [{"type": "text", "text": up}]}
+                ],
+                "temperature": 0.0
+            }
         }
 
-    def _build_system_prompt(self) -> str:
-        """
-        Claude 4.5 Haiku system prompt.
-        """
-        return """
-You are an expert email triage AI. Your goal is to decide whether an incoming email requires an immediate Slack notification to the user or if it should be silent.
+    def _parse_tw_response(self, data: dict) -> tuple:
+        """Token Watcher v2 응답에서 (text, usage_dict) 추출. 두 가지 형식 지원."""
+        # 형식 1: Bedrock Messages API (content[].text)
+        if "content" in data and isinstance(data["content"], list):
+            text = "".join(
+                c.get("text", "") for c in data["content"] if c.get("type") == "text"
+            ).strip()
+            usage = self._extract_tw_usage(data.get("usage"))
+            return text, usage
 
-### 0. CRITICAL PRINCIPLE (NEVER IGNORE)
-**The sender's email domain does NOT determine importance.** Personal email addresses (gmail.com, naver.com, daum.net, etc.) can send highly critical business emails. ALWAYS judge by the CONTENT and SUBJECT, not by sender domain.
+        # 형식 2: v1 래핑 (output.message.content[].text) — 하위호환
+        if "output" in data:
+            content_list = data["output"]["message"]["content"]
+            text = "".join(
+                c.get("text", "") for c in content_list if isinstance(c, dict)
+            ).strip()
+            usage = self._extract_tw_usage(data.get("usage"))
+            return text, usage
 
-### 1. CLASSIFICATION CATEGORIES
-- **NOTIFY (score >= 0.5)**: 
-    - **ANY email that appears to be work-related communication from a human** regardless of sender domain.
-    - **Internal Communication Keywords (ALWAYS NOTIFY)**: Emails with subjects containing [공지], [안내], [보고], [요청], [협조], [긴급], [중요], [회의], [미팅], 킥오프, 일정, 업무, 프로젝트 must be NOTIFY with score >= 0.7.
-    - **Legal, Compliance & Security (CRITICAL)**: Emails from Law/Patent/Labor Firms, or Security services. Always high priority.
-    - **Government & Support Projects (CRITICAL)**: Official notifications from government agencies or R&D support institutions.
-    - **Financial & Billing (CRITICAL)**: Settlement requests (정산신청), Invoices (청구서), Billing Issues (결제 실패), Payment requests, tax-related documents.
-    - **Infrastructure & Continuity**: License expirations, Server failures, App Store issues.
-    - **Ongoing conversations**: Replies/forwards with "Re:", "RE:", "Fwd:".
-    - **Customer inquiries**: CS inquiries, questions about products/services.
-    - **Direct Human Communication**: Any email that reads like a human wrote it personally to the recipient.
-- **SILENT (score < 0.5)**: 
-    - Automated newsletters and marketing promotions.
-    - Routine status updates that require no action.
-    - Platform summaries & curation (Notion, LinkedIn digests, etc.).
-    - Administrative automation logs.
+        raise _TokenWatcherError(f"Unknown TW response format: {list(data.keys())}", can_fallback=True)
 
-### 2. DETAILED TRIAGE RULES
-- **Work-related from Personal Accounts**: If someone sends from naver.com/gmail.com but the content is clearly work-related (meeting, report, project discussion), it is **NOTIFY** with high score (0.7+).
-- **Legal Priority**: Any mail regarding lawsuits, copyright, trademark, certification must be NOTIFY regardless of sender.
-- **Replies & Forwards**: ALWAYS NOTIFY unless it's a muted routine report.
-- **When in doubt, NOTIFY**: It's better to over-notify than to miss an important email.
+    def _extract_tw_usage(self, usage) -> Optional[dict]:
+        if not usage or not isinstance(usage, dict):
+            return None
+        return {
+            "input_tokens": usage.get("input_tokens", usage.get("inputTokens", 0)),
+            "output_tokens": usage.get("output_tokens", usage.get("outputTokens", 0)),
+            "cache_write_tokens": usage.get("cache_creation_input_tokens", 0),
+            "cache_read_tokens": usage.get("cache_read_input_tokens", 0),
+            "model_id": self.tw_model_id,
+        }
 
-### 3. PERSONALIZED MUTING (IMPORTANT)
-Users can "mute" specific types of emails. You will be provided with a list of "muted patterns".
+    # ─── Bedrock 직접 호출 (폴백) ─────────────────────────────
 
-**HOW MUTING WORKS:**
-- Each muted pattern has: `sender` (email address) and `type_pattern` (extracted email type)
-- The `type_pattern` is a normalized description of the email type (e.g., "채용 지원 알림", "도메인 기간연장 안내")
+    def _call_bedrock(self, sp, up, max_tokens=512, use_cache=True):
+        if not self.client:
+            logger.error("Bedrock client not initialized")
+            return AnalysisResult(score=0.0, category=ImportanceCategory.SILENT, reason="AI 연결 불가", source=AnalysisSource.LLM)
+        try:
+            system_block = {"type": "text", "text": sp}
+            if use_cache:
+                system_block["cache_control"] = {"type": "ephemeral"}
+            response = self.client.messages.create(model=self.model_id, max_tokens=max_tokens, temperature=0.0, system=[system_block], messages=[{"role": "user", "content": [{"type": "text", "text": up}]}])
+            content_text = "".join(b.text for b in response.content if b.type == "text").strip()
+            self.last_usage = self._extract_usage(response)
+            return self._parse(content_text)
+        except Exception as e:
+            logger.error(f"Bedrock call failed: {e}")
+            return AnalysisResult(score=0.5, category=ImportanceCategory.NOTIFY, reason="AI 분석 실패 - 안전을 위해 알림 전송", source=AnalysisSource.LLM)
 
-**MATCHING RULES:**
-1. Check if the current email's sender matches a muted sender
-2. If sender matches, check if the current email's TYPE/PURPOSE matches the muted type_pattern
-3. Type matching should be semantic, not exact string match:
-   - "[그리팅] 채용 지원 알림" matches any job application notification from 그리팅
-   - "[NHN Domain] 도메인 기간연장 안내" matches any domain renewal notice from NHN
-   - "뉴스레터" matches any newsletter-type email
+    # ─── 공통 파서 ────────────────────────────────────────────
 
-**CRITICAL RULES:**
-- Do NOT block the sender entirely - only block emails of the SAME TYPE
-- If sender matches but type is DIFFERENT, still NOTIFY (e.g., 결제 실패 vs 도메인 연장)
-- If an email matches a user's muted pattern, include that user in `user_overrides` with "silent"
+    def _parse(self, ct):
+        s=ct.find('{'); e=ct.rfind('}')
+        if s!=-1 and e!=-1: ct=ct[s:e+1]
+        p=json.loads(ct)
+        cat=ImportanceCategory.NOTIFY if p.get("category","silent").lower() in ["critical","important","normal","notify"] else ImportanceCategory.SILENT
+        summary = p.get("summary")
+        if summary is not None:
+            summary = summary.strip() if isinstance(summary, str) else summary
+            if not summary or len(summary) < 10:
+                summary = None
+        return AnalysisResult(score=float(p.get("score",0.0)),category=cat,reason=p.get("reason",""),summary=summary,source=AnalysisSource.LLM,raw_data={"user_overrides":p.get("user_overrides",{})})
 
-### 4. 3-LINE SUMMARY (TL;DR)
-- If the email is **NOTIFY**, generate a **3-line summary** of the content in **KOREAN**.
-- Format: Use bullet points (•).
-- Style: Professional, concise, and business-oriented. Focus on what the sender wants or what the main news is.
-- If the email is SILENT, the summary can be null or a very brief 1-line summary.
+    def _extract_usage(self, r):
+        u=getattr(r,"usage",None)
+        if not u: return None
+        return {"input_tokens":getattr(u,"input_tokens",0),"output_tokens":getattr(u,"output_tokens",0),"cache_write_tokens":getattr(u,"cache_creation_input_tokens",0),"cache_read_tokens":getattr(u,"cache_read_input_tokens",0),"model_id":self.model_id}
 
-### 5. OUTPUT SPECIFICATIONS
-Return ONLY a valid JSON object.
-- **score**: float (0.0 to 1.0) for the email's base importance.
-- **category**: "notify" or "silent" (base decision).
-- **reason**: **STRICTLY KOREAN**. Explain why this mail is notify or silent.
-- **summary**: **STRICTLY KOREAN**. 3-line summary (for notify) or 1-line brief (for silent).
-- **user_overrides**: A dictionary mapping `user_id` to "notify" or "silent".
-
-JSON Schema:
-{
-  "score": float,
-  "category": "notify" | "silent",
-  "reason": "Korean string",
-  "summary": "Korean string (3 lines with bullet points for notify)",
-  "user_overrides": { "USER_ID": "notify" | "silent" }
-}
-
----
-### 6. MISSION STATEMENT
-Zero missed critical signals. Personal email domains are NOT a reason to lower importance. When content is work-related, ALWAYS notify. (Note: This prompt is optimized for Anthropic Prompt Caching.)
-"""
-
-    def _build_user_prompt(self, event: GmailEvent, user_preferences_map: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> str:
-        recipients = ", ".join(event.recipients)
-        snippet = event.raw_data.get('snippet', 'N/A') if event.raw_data else 'N/A'
-        
-        prompt = (
-            f"Subject: {event.subject or ''}\n"
-            f"Sender: {event.sender}\n"
-            f"Recipients: {recipients}\n"
-            f"Owner: {event.owner}\n"
-            f"EventType: {event.event_type}\n"
-            f"Snippet: {snippet}"
+    def _build_system_prompt(self):
+        return (
+            "You are an expert email triage AI. Return ONLY valid JSON.\n\n"
+            "## 응답 형식 (JSON)\n"
+            '{"score": float(0.0~1.0), "category": "notify"|"silent", '
+            '"reason": "한국어로 분류 사유 작성", '
+            '"summary": "한국어로 핵심 요약 작성", '
+            '"user_overrides": {}}\n\n'
+            "## 분류 기준\n"
+            "- NOTIFY: 업무 관련, 법률/재무, 사람 간 커뮤니케이션\n"
+            "- SILENT: 뉴스레터, 자동화 알림, 마케팅\n\n"
+            "## 요약(summary) 작성 규칙\n"
+            "- 반드시 한국어로 작성할 것\n"
+            "- 반드시 불릿 포인트(•) 형식으로 각 항목을 줄바꿈하여 3줄로 작성할 것\n"
+            "- 형식: \"• 첫번째 핵심\\n• 두번째 핵심\\n• 세번째 핵심\"\n"
+            "- 단순 번역이 아닌, 메일의 핵심 정보를 추출하여 구체적이고 정보가 담긴 요약을 작성할 것\n"
+            "- 요약은 최소 10자 이상이어야 함\n"
+            "- 누가, 무엇을, 왜 보냈는지 핵심만 간결하게 포함할 것\n\n"
+            "## 요약 예시\n"
+            '"• 프로젝트 일정이 2주 연기됨\\n• 다음 주 월요일까지 수정된 계획서 제출 요청\\n• 팀 전체 일정 재조정 필요"\n'
+            '"• 서버 장애 발생으로 긴급 대응 필요\\n• 현재 복구 작업 진행 중\\n• 영향 범위 확인 후 공유 예정"\n'
+            '"• 월간 매출 보고서 검토 요청\\n• 전월 대비 15% 증가 확인 필요\\n• 금주 금요일까지 피드백 요청"'
         )
-        
-        if user_preferences_map:
-            prompt += "\n\n### USER MUTED PATTERNS (Personalization)\n"
-            prompt += "The following users have muted specific EMAIL TYPES. Match by TYPE/PURPOSE, not exact subject.\n"
-            for user_id, prefs in user_preferences_map.items():
-                prompt += f"- User: {user_id}\n"
-                for pref in prefs:
-                    type_pattern = pref.get('subject_pattern', 'N/A')
-                    prompt += f"  - Muted Sender: {pref.get('sender')}\n"
-                    prompt += f"    Muted Type: {type_pattern}\n"
-                    if pref.get('original_subject'):
-                        prompt += f"    (Example: {pref.get('original_subject')[:50]}...)\n"
-            
-        return prompt
+
+    def _build_user_prompt(self, event, upm=None):
+        sn = event.raw_data.get('snippet','N/A') if event.raw_data else 'N/A'
+        p = f"Subject: {event.subject or ''}\nSender: {event.sender}\nRecipients: {', '.join(event.recipients)}\nOwner: {event.owner}\nEventType: {event.event_type}\nSnippet: {sn}"
+        if event.raw_data and event.raw_data.get('body_text'):
+            body = event.raw_data['body_text']
+            if len(body) > 2000:
+                body = body[:2000]
+            p += f"\nBody: {body}"
+        if upm:
+            p += "\n\n### MUTED PATTERNS\n"
+            for uid, prefs in upm.items():
+                for pr in prefs:
+                    p += f"- User:{uid} Sender:{pr.get('sender')} Type:{pr.get('subject_pattern','N/A')}\n"
+        return p

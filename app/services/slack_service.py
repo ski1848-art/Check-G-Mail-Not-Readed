@@ -1,11 +1,28 @@
+"""
+slack_service.py - Slack Bot 알림 전송 서비스
+
+[역할]
+  이메일 분석 결과를 Slack Block Kit 메시지로 전송.
+  DM(개인 메시지) 또는 채널 메시지 지원.
+
+[메시지 구조] (Block Kit)
+  ┌─────────────────────────────────┐
+  │ 📧 [메일 제목]                    │  ← header
+  │ 보낸사람: xxx / 수신: xxx          │  ← section
+  │ 📝 AI 핵심 요약                   │  ← section (optional)
+  │ [Gmail 열기] [읽음 처리] [차단]     │  ← actions (interactive buttons)
+  └─────────────────────────────────┘
+
+[인터랙티브 버튼]
+  - Gmail 열기: URL 버튼 (Gmail 검색 링크)
+  - 읽음 처리: mark_as_read_gmail → Gmail API로 UNREAD 라벨 제거
+  - 해당 유형 알림 차단: silent_forever → 학습 데이터 저장 (발신자+유형 패턴)
+"""
 from typing import List
 import json
 from datetime import datetime, timedelta, timezone
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-import ssl
-import urllib3
-from urllib3.util.ssl_ import create_urllib3_context
 
 # 한국 시간대 (KST = UTC+9)
 KST = timezone(timedelta(hours=9))
@@ -16,16 +33,6 @@ def to_kst(dt: datetime) -> datetime:
         # naive datetime이면 UTC로 간주
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(KST)
-
-# SSL 인증서 검증 무시 (로컬 환경용, 프로덕션에서는 제거)
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# SSL context 생성 및 검증 비활성화
-def get_ssl_context():
-    ctx = create_urllib3_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return ctx
 
 from app.config import Config
 from app.models import NotificationTarget, GmailEvent, AnalysisResult
@@ -97,6 +104,56 @@ class SlackService:
 
         return all_success
 
+    def send_cost_alert_dm(
+        self,
+        recipient_id: str,
+        current_cost_usd: float,
+        limit_cost_usd: float,
+        threshold_percent: float,
+        date_str: str,
+    ) -> bool:
+        """
+        비용 알림 DM 전송. recipient_id는 Slack 유저 ID.
+        """
+        if not self.client:
+            logger.warning("Slack client not initialized. Cannot send cost alert.")
+            return False
+        try:
+            percent_used = (current_cost_usd / limit_cost_usd * 100) if limit_cost_usd > 0 else 0
+            dm_response = self.client.conversations_open(users=[recipient_id])
+            channel_id = dm_response["channel"]["id"]
+            self.client.chat_postMessage(
+                channel=channel_id,
+                text=f"[비용 경고] AI 사용 비용이 한도의 {percent_used:.0f}%에 도달했습니다.",
+                blocks=[
+                    {
+                        "type": "header",
+                        "text": {"type": "plain_text", "text": "⚠️ AI 비용 경고", "emoji": True}
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*날짜*\n{date_str}"},
+                            {"type": "mrkdwn", "text": f"*사용 비율*\n{percent_used:.1f}% (알림 기준: {threshold_percent * 100:.0f}%)"},
+                            {"type": "mrkdwn", "text": f"*현재 비용*\n${current_cost_usd:.4f}"},
+                            {"type": "mrkdwn", "text": f"*일일 한도*\n${limit_cost_usd:.2f}"},
+                        ]
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{"type": "mrkdwn", "text": "한도는 관리자 화면 → 설정에서 바꿀 수 있습니다."}]
+                    }
+                ]
+            )
+            logger.info(f"Cost alert DM sent to {recipient_id}: ${current_cost_usd:.4f}/${limit_cost_usd:.2f} ({percent_used:.1f}%)")
+            return True
+        except SlackApiError as e:
+            logger.error(f"Failed to send cost alert DM to {recipient_id}: {e.response['error']}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error sending cost alert DM: {e}")
+            return False
+
     def _build_fallback_text(self, event: GmailEvent, analysis: AnalysisResult) -> str:
         """
         Build fallback text for notifications that don't support blocks.
@@ -155,7 +212,7 @@ class SlackService:
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*보낸사람*: {event.sender}\n*수신*: {event.owner}"
+                    "text": f"*보낸사람*: {event.sender}\n*받는사람*: {event.owner}"
                 }
             },
         ]
@@ -202,7 +259,7 @@ class SlackService:
                         "type": "button",
                         "text": {
                             "type": "plain_text",
-                            "text": "해당 유형 알림 차단",
+                            "text": "이런 알림 차단",
                             "emoji": False
                         },
                         "style": "danger",
@@ -215,11 +272,11 @@ class SlackService:
                         "confirm": {
                             "title": {
                                 "type": "plain_text",
-                                "text": "특정 유형 알림 차단"
+                                "text": "앞으로 비슷한 알림을 차단할까요?"
                             },
                             "text": {
                                 "type": "plain_text",
-                                "text": "이 발신자가 보내는 비슷한 유형의 메일 알림만 꺼집니다. 내용이 다른 중요한 메일은 평소처럼 정상적으로 알림이 옵니다."
+                                "text": "이 발신자가 보내는 비슷한 메일만 알림이 꺼집니다. 다른 중요한 메일은 평소처럼 알림이 옵니다."
                             },
                             "confirm": {
                                 "type": "plain_text",

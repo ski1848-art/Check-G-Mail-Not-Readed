@@ -1,3 +1,22 @@
+"""
+router.py - 이메일 → Slack 알림 대상 라우팅
+
+[라우팅 방식]
+  1. Firestore 우선: routing_rules 컬렉션에서 Gmail→Slack 매핑 조회
+  2. JSON 폴백: config/routing_rules.json에서 정적 매핑 조회
+  
+[Firestore 라우팅 규칙 구조]
+  Collection: routing_rules
+  Document ID: Slack User ID (예: U04E9PMTLTZ)
+  Fields:
+    - slack_user_id: str
+    - gmail_accounts: List[str]  (이 사용자가 모니터링할 Gmail 주소들)
+    - enabled: bool
+    
+[타겟 문자열 형식] (JSON 모드)
+  - "user:U12345"     → Slack DM
+  - "channel:C12345"  → Slack 채널
+"""
 from typing import List, Set, Optional
 from app.models import GmailEvent, NotificationTarget
 from app.config import Config

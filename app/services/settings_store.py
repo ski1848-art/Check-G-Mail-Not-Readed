@@ -1,3 +1,24 @@
+"""
+settings_store.py - 시스템 설정 및 제어 관리
+
+[역할]
+  1. 시스템 전역 설정 (system_settings/general): 블랙리스트, 임계값 등
+  2. 시스템 제어 (system_control/status): 일시중지/재시작, 일일 한도
+  3. 일일 사용량 추적 (daily_usage/{YYYY-MM-DD}): AI 호출 횟수, 비용
+
+[캐시 전략]
+  - 싱글톤 패턴 (SettingsStore._instance)
+  - 설정값 TTL: 5분 (자주 변경되지 않으므로)
+
+[시스템 제어 흐름]
+  관리자 웹 → POST /api/system → Firestore system_control 업데이트
+  → 다음 배치 실행 시 is_system_enabled()에서 체크 → 중지/한도초과 시 스킵
+
+[일일 한도 체크]
+  - daily_limit_calls: AI 호출 횟수 한도 (기본 1000)
+  - daily_limit_cost_usd: 비용 한도 (기본 $5.0)
+  - KST 기준 날짜로 일일 사용량 집계
+"""
 import time
 import threading
 from datetime import datetime, timezone
@@ -12,6 +33,11 @@ logger = get_logger("settings_store")
 SYSTEM_CONTROL_COLLECTION = "system_control"
 SYSTEM_CONTROL_DOC = "status"
 DAILY_USAGE_COLLECTION = "daily_usage"
+SETTINGS_COLLECTION = "system_settings"
+SETTINGS_DOC = "general"
+
+# 비용 알림 기본값
+DEFAULT_COST_ALERT_RECIPIENT = "U04E9PMTLTZ"  # 변홍주
 
 class SettingsStore:
     """
@@ -214,8 +240,9 @@ class SettingsStore:
                     "cost_usd": data.get("cost_usd", 0.0),
                     "input_tokens": data.get("input_tokens", 0),
                     "output_tokens": data.get("output_tokens", 0),
+                    "cost_alert_sent": data.get("cost_alert_sent", False),
                 }
-            return {"date": today, "calls": 0, "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0}
+            return {"date": today, "calls": 0, "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0, "cost_alert_sent": False}
         except Exception as e:
             logger.error(f"Error getting daily usage: {e}")
             return {"date": self._get_today_key(), "calls": 0, "cost_usd": 0.0}
@@ -271,16 +298,62 @@ class SettingsStore:
         Returns: (enabled: bool, reason: str)
         """
         status = self.get_system_status()
-        
+
         # 1. 수동 중지 상태 체크
         if not status.get("enabled", True):
             reason = status.get("pause_reason", "수동 일시 중지됨")
             return False, reason
-        
+
         # 2. 일일 한도 체크
         exceeded, reason = self.check_daily_limit_exceeded()
         if exceeded:
             return False, reason
-        
+
         return True, "정상"
+
+    # =============================================
+    # 비용 알림 설정
+    # =============================================
+
+    def get_cost_alert_settings(self) -> Dict[str, Any]:
+        """
+        비용 알림 설정 조회 (system_settings/general TTL 캐시 경유).
+        Returns: {
+            "threshold_percent": float (0.0~1.0, 기본 0.8),
+            "slack_channel": str (기본 변홍주 ID)
+        }
+        """
+        # get_setting()은 5분 TTL 캐시를 경유하므로 Firestore 직접 읽기 불필요
+        raw = self.get_setting("cost_alert_threshold_percent", 80)
+        # UI에서 퍼센트(10-100) 또는 소수(0.1-1.0) 모두 허용
+        threshold = float(raw) / 100.0 if float(raw) > 1.0 else float(raw)
+        return {
+            "threshold_percent": threshold,
+            "slack_channel": self.get_setting("cost_alert_slack_channel") or DEFAULT_COST_ALERT_RECIPIENT,
+        }
+
+    def is_cost_alert_sent_today(self) -> bool:
+        """오늘 이미 비용 알림을 보냈는지 확인"""
+        if not self.db:
+            return False
+        try:
+            today = self._get_today_key()
+            doc = self.db.collection(DAILY_USAGE_COLLECTION).document(today).get()
+            return bool((doc.to_dict() or {}).get("cost_alert_sent", False)) if doc.exists else False
+        except Exception as e:
+            logger.error(f"Error checking cost_alert_sent: {e}")
+            return False
+
+    def mark_cost_alert_sent_today(self) -> None:
+        """오늘 비용 알림 전송 완료 표시 (중복 방지)"""
+        if not self.db:
+            return
+        try:
+            today = self._get_today_key()
+            self.db.collection(DAILY_USAGE_COLLECTION).document(today).set(
+                {"cost_alert_sent": True, "cost_alert_sent_at": datetime.now(timezone.utc).isoformat()},
+                merge=True
+            )
+        except Exception as e:
+            logger.error(f"Error marking cost_alert_sent: {e}")
 

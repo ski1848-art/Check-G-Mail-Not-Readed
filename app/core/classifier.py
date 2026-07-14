@@ -1,3 +1,23 @@
+"""
+classifier.py - 이메일 중요도 분류 파이프라인
+
+[3단계 분류 프로세스]
+  Step 0-1: 규칙 기반 필터 (_apply_rules)
+    - 블랙리스트 도메인 → 즉시 SILENT
+    - 스팸 키워드 → 즉시 SILENT
+    - 화이트리스트 도메인 → 즉시 NOTIFY (AI 요약은 별도 호출)
+  
+  Step 2: AI 분석 (LLMService.analyze_email)
+    - 메일 제목/발신자/스니펫을 Claude에게 전달
+    - 사용자별 차단 패턴(user_preferences_map)도 함께 전달
+    - JSON 응답: {score, category, reason, summary, user_overrides}
+  
+  Step 3: 임계값 적용 (_apply_thresholds)
+    - AI 점수가 score_threshold_notify 이상이면 NOTIFY, 미만이면 SILENT
+
+[설정 소스]
+  Firestore system_settings (동적) + config/spam_filter.json (정적 기본값)
+"""
 from typing import Any, Dict, List, Optional
 from app.models import GmailEvent, AnalysisResult, ImportanceCategory, AnalysisSource
 from app.config import Config
@@ -30,35 +50,50 @@ class Classifier:
             "whitelist_domains": dynamic_settings.get("whitelist_domains", spam_config.get("whitelist_domains", [])),
             "spam_keywords": dynamic_settings.get("spam_keywords", spam_config.get("spam_keywords", [])),
             "urgent_keywords": dynamic_settings.get("urgent_keywords", spam_config.get("urgent_keywords", [])),
+            "noreply_patterns": dynamic_settings.get("noreply_patterns", spam_config.get("noreply_patterns", [])),
             "score_threshold_notify": dynamic_settings.get("score_threshold_notify", Config.SCORE_THRESHOLD_NOTIFY)
         }
+
+    def _validate_summary(self, summary: Optional[str]) -> Optional[str]:
+        """요약 품질 검증: None, 빈 문자열, 공백만, 10자 미만 → None"""
+        if summary is None:
+            return None
+        if not isinstance(summary, str):
+            return None
+        stripped = summary.strip()
+        if not stripped or len(stripped) < 10:
+            return None
+        return summary
 
     def classify(self, event: GmailEvent, user_preferences_map: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> AnalysisResult:
         """
         Execute the 3-step classification pipeline with dynamic settings.
         """
         config = self._get_filter_config()
-        
+
         # Step 0 & 1: Rule-based Filter
         rule_result = self._apply_rules(event, config)
         if rule_result:
             if rule_result.category == ImportanceCategory.NOTIFY:
-                # 규칙으로 알림 대상(화이트리스트 등)인 경우에도 요약을 위해 AI 호출
-                logger.info(f"[{event.message_id}] RULE is NOTIFY, calling LLM for summary...")
-                llm_result = self.llm_service.analyze_email(event, user_preferences_map)
-                rule_result.summary = llm_result.summary
-            
+                # 규칙으로 알림 대상(화이트리스트 등)인 경우 요약만 경량 호출 (전체 분류 불필요)
+                logger.info(f"[{event.message_id}] RULE is NOTIFY, calling summarize_email for summary...")
+                summary = self.llm_service.summarize_email(event)
+                rule_result.summary = self._validate_summary(summary)
+
             logger.info(f"[{event.message_id}] Classified by RULE: {rule_result.category}")
             return rule_result
-            
+
         # Step 2: LLM Analysis
         logger.info(f"[{event.message_id}] calling LLM for analysis...")
         llm_result = self.llm_service.analyze_email(event, user_preferences_map)
-        
+
+        # 요약 품질 검증
+        llm_result.summary = self._validate_summary(llm_result.summary)
+
         # Step 3: Thresholding (Refine LLM result based on thresholds)
         final_result = self._apply_thresholds(llm_result, config)
         logger.info(f"[{event.message_id}] Classified by LLM: {final_result.category} (Score: {final_result.score})")
-        
+
         return final_result
 
     def _apply_rules(self, event: GmailEvent, config: Dict[str, Any]) -> Optional[AnalysisResult]:
@@ -75,9 +110,15 @@ class Classifier:
             matched_keyword = next(k for k in config["spam_keywords"] if k in subject)
             return AnalysisResult(score=0.0, category=ImportanceCategory.SILENT, reason=f"광고/스팸 키워드 포함 ({matched_keyword})", source=AnalysisSource.RULE)
             
-        # 2. Whitelist -> NOTIFY (공식 파트너사 등은 유지)
+        # 2. Whitelist -> NOTIFY (공식 파트너사 등은 유지, no-reply보다 우선)
         if any(d in sender for d in config["whitelist_domains"]):
             return AnalysisResult(score=1.0, category=ImportanceCategory.NOTIFY, reason=f"공식 발신처 (화이트리스트: {sender})", source=AnalysisSource.RULE)
+
+        # 3. no-reply 발신자 자동 SILENT
+        noreply_patterns = config.get("noreply_patterns", [])
+        for pattern in noreply_patterns:
+            if sender.startswith(pattern) or f"<{pattern}" in sender:
+                return AnalysisResult(score=0.0, category=ImportanceCategory.SILENT, reason="no-reply sender", source=AnalysisSource.RULE)
 
         # 키워드 기반 자동 알림(urgent_keywords)은 제거되었습니다.
         # 이제 모든 일반 메일은 LLM(AI)이 문맥을 분석하여 결정합니다.

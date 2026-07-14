@@ -1,15 +1,27 @@
+"""
+models.py - Pydantic 데이터 모델 정의
+
+이메일 처리 파이프라인에서 사용되는 핵심 데이터 구조.
+
+[모델 관계]
+  GmailEvent (입력) → Classifier → AnalysisResult (분석 결과)
+  GmailEvent + AnalysisResult → Router → NotificationTarget (알림 대상)
+  모든 것을 합쳐서 → ProcessedResult (최종 처리 결과, 로깅/디버깅용)
+"""
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from enum import Enum
 from datetime import datetime
 
 class ImportanceCategory(str, Enum):
-    NOTIFY = "notify"
-    SILENT = "silent"
+    """이메일 중요도 분류 결과 (2단계)"""
+    NOTIFY = "notify"   # 알림 전송 대상
+    SILENT = "silent"   # 무시 (알림 안 보냄)
 
 class AnalysisSource(str, Enum):
-    RULE = "rule"  # Determined by static rules
-    LLM = "llm"    # Determined by LLM
+    """분류 결정 주체"""
+    RULE = "rule"  # 정적 규칙 (블랙리스트/화이트리스트/키워드)
+    LLM = "llm"    # AI 분석 (Claude Haiku)
 
 class GmailEvent(BaseModel):
     """

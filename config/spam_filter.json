@@ -23,6 +23,15 @@
         "계정 삭제함",
         "데이터가 전송되었습니다"
     ],
+    "noreply_patterns": [
+        "noreply@",
+        "no-reply@",
+        "mailer-daemon@",
+        "donotreply@",
+        "do-not-reply@",
+        "notifications@",
+        "automated@"
+    ],
     "urgent_keywords": [
         "긴급",
         "장애",
@@ -36,7 +45,6 @@
         "인사",
         "견적서",
         "대원헬스케어",
-        "주간트랜드",
         "주간트렌드",
         "법무",
         "변호사",

@@ -1,3 +1,20 @@
+"""
+routing_store.py - Firestore 라우팅 규칙 캐시 관리
+
+[역할]
+  Firestore의 routing_rules 컬렉션을 TTL 캐시로 관리.
+  Gmail 주소 → Slack User ID 매핑을 제공.
+
+[캐시 전략]
+  - 싱글톤 패턴 (RoutingStore._instance)
+  - TTL: ROUTING_CACHE_TTL_SEC (기본 60초)
+  - 캐시 만료 시 Firestore에서 재조회 (thread-safe)
+
+[Firestore 구조]
+  Collection: routing_rules
+  Document ID: Slack User ID
+  Fields: { slack_user_id, gmail_accounts: [], enabled: bool }
+"""
 import time
 import threading
 from typing import Dict, List, Optional

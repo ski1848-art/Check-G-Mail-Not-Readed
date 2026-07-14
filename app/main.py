@@ -1,3 +1,22 @@
+"""
+main.py - Flask 애플리케이션 엔트리포인트
+
+[API 엔드포인트]
+  POST /run-batch           - 배치 실행 (Cloud Scheduler가 5분마다 호출)
+  POST /trigger-notification - 관리자 수동 알림 전송 + 학습
+  POST /block-notification   - 관리자 수동 차단 + 학습
+  POST /slack/interactive    - Slack 버튼 클릭 처리 (알림 차단/해제/읽음 처리)
+
+[배치 처리 흐름] (/run-batch)
+  1. 시스템 상태 체크 (일시중지/한도초과 시 스킵)
+  2. 등록된 모든 사용자의 Gmail 미읽은 메일 조회
+  3. 각 메일을 병렬로 처리 (process_single_event)
+     a. 라우팅 대상자 조회
+     b. 중복 체크 (이미 처리된 메일이면 LLM 스킵)
+     c. AI 분류 (Classifier) → 규칙 기반 차단 체크
+     d. Slack 알림 전송
+     e. Firestore에 스냅샷 저장 + 일일 사용량 업데이트
+"""
 import sys
 import json
 import argparse
@@ -19,31 +38,28 @@ from app.models import ProcessedResult, ImportanceCategory, GmailEvent, Analysis
 from app.core.classifier import Classifier
 from app.core.router import Router
 
-# Load environment variables
+# ── 초기화 ──────────────────────────────────────────
 load_dotenv()
-
-# Setup logging
 setup_logging()
 logger = get_logger("main")
 
-# Initialize Flask app
 app = Flask(__name__)
 
-# Enable CORS
+# Slack 인터랙션 및 관리자 API에 CORS 허용
 CORS(app, resources={
     r"/slack/*": {"origins": "*"},
     r"/trigger-notification": {"origins": "*"},
     r"/block-notification": {"origins": "*"}
 })
 
-# Initialize services
-state_store = create_state_store()
-gmail_service = None
-classifier = Classifier()
-router = Router()
-slack_service = SlackService()
+# ── 서비스 인스턴스 ──────────────────────────────────
+state_store = create_state_store()   # 중복 알림 방지 (File 또는 Firestore)
+gmail_service = None                 # Gmail API 클라이언트 (lazy init)
+classifier = Classifier()           # 이메일 중요도 분류기 (규칙 + AI)
+router = Router()                   # 이메일 → Slack 대상 라우팅
+slack_service = SlackService()       # Slack Bot 메시지 전송
 
-# Argument parser for dry-run
+# --dry-run 옵션: 실제 Slack 전송 없이 테스트
 parser = argparse.ArgumentParser()
 parser.add_argument("--dry-run", action="store_true", help="Run without sending Slack notifications")
 args, unknown = parser.parse_known_args()
@@ -53,16 +69,34 @@ if DRY_RUN:
     logger.info("⚠️ RUNNING IN DRY-RUN MODE. No notifications will be sent.")
 
 def get_gmail_service():
+    """Gmail API 클라이언트를 lazy 초기화하여 반환 (첫 호출 시에만 생성)"""
     global gmail_service
     if gmail_service is None:
         gmail_service = GmailService()
     return gmail_service
 
+def _check_internal_auth():
+    """내부 API 엔드포인트 인증 체크.
+    INTERNAL_API_KEY 설정 시 Authorization: Bearer {key} 헤더 필수.
+    미설정 시 스킵 (로컬 개발 환경 호환).
+    """
+    api_key = Config.INTERNAL_API_KEY
+    if not api_key:
+        return None
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer ') or auth_header[7:] != api_key:
+        logger.warning(f"Unauthorized internal API call from {request.remote_addr}")
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+    return None
+
 @app.route('/run-batch', methods=['POST'])
 def run_batch():
+    auth_err = _check_internal_auth()
+    if auth_err:
+        return auth_err
     try:
         logger.info("Starting batch processing...")
-        
+
         # ✅ 시스템 상태 체크 (일시 중지 또는 한도 초과 시 즉시 리턴)
         from app.services.settings_store import SettingsStore
         settings = SettingsStore()
@@ -106,7 +140,28 @@ def run_batch():
         
         # ✅ 배치 실행 정보 업데이트
         settings.update_last_batch_info(len(results))
-        
+
+        # ✅ 비용 알림 체크 (한도 대비 임계값 초과 시 변홍주에게 DM)
+        try:
+            usage = settings.get_daily_usage()  # daily_usage 1회만 읽기
+            if not usage.get("cost_alert_sent", False):
+                alert_cfg = settings.get_cost_alert_settings()  # TTL 캐시 경유
+                status = settings.get_system_status()
+                limit_cost = status.get("daily_limit_cost_usd", 5.0)
+                current_cost = usage.get("cost_usd", 0.0)
+                if limit_cost > 0 and (current_cost / limit_cost) >= alert_cfg["threshold_percent"]:
+                    sent = slack_service.send_cost_alert_dm(
+                        recipient_id=alert_cfg["slack_channel"],
+                        current_cost_usd=current_cost,
+                        limit_cost_usd=limit_cost,
+                        threshold_percent=alert_cfg["threshold_percent"],
+                        date_str=usage.get("date", ""),
+                    )
+                    if sent:
+                        settings.mark_cost_alert_sent_today()
+        except Exception as e:
+            logger.error(f"Cost alert check failed: {e}")
+
         return jsonify({
             "status": "success",
             "processed": len(results),
@@ -120,6 +175,9 @@ def run_batch():
 @app.route('/trigger-notification', methods=['POST'])
 def trigger_notification():
     """알림 수동 전송 및 '앞으로 알림 받기' 학습"""
+    auth_err = _check_internal_auth()
+    if auth_err:
+        return auth_err
     try:
         data = request.json
         email_id = data.get('email_id')
@@ -189,6 +247,9 @@ def trigger_notification():
 @app.route('/block-notification', methods=['POST'])
 def block_notification():
     """알림 수동 차단 및 '앞으로 무시' 학습"""
+    auth_err = _check_internal_auth()
+    if auth_err:
+        return auth_err
     try:
         data = request.json
         email_id = data.get('email_id')
@@ -226,14 +287,30 @@ def block_notification():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 def process_single_event(event) -> ProcessedResult:
+    """
+    개별 이메일 처리 파이프라인 (병렬 실행됨)
+    
+    [처리 순서]
+    1. 라우팅 대상자 조회 (Router)
+    2. 중복 체크: 이미 처리된 메일이면 캐시된 결과 재사용 (LLM 비용 절감)
+    3. AI 분류 (Classifier): 규칙 기반 필터 → LLM 분석 → 임계값 적용
+    4. 규칙 기반 차단: 사용자가 Slack에서 차단한 발신자/유형 체크
+    5. Firestore에 이메일 스냅샷 저장 + 일일 사용량 업데이트
+    6. 중복 알림 방지 후 Slack 전송
+    """
     targets = router.get_targets(event)
     if not targets:
         return ProcessedResult(event=event, analysis=AnalysisResult(score=0.0, category=ImportanceCategory.SILENT, reason="알림 대상자 없음", source=AnalysisSource.RULE), targets=[], notification_sent=False)
 
     # ✅ 중복 체크: LLM 호출 전에 이미 처리된 메일인지 확인 (비용 절감)
     from app.services.learning_store import get_user_silent_preferences, get_email_event
-    existing_event = get_email_event(event.message_id)
-    
+    try:
+        existing_event = get_email_event(event.message_id)
+    except Exception as e:
+        # Firestore 오류 시 LLM 호출 스킵 (비용 폭증 방지)
+        logger.error(f"[{event.message_id[:30]}] Firestore unavailable, skipping LLM: {e}")
+        return ProcessedResult(event=event, analysis=AnalysisResult(score=0.0, category=ImportanceCategory.SILENT, reason=f"Firestore 오류로 처리 보류", source=AnalysisSource.RULE), targets=targets, notification_sent=False)
+
     if existing_event:
         # 이미 처리된 메일 → 기존 분석 결과 재사용, LLM 호출 스킵
         logger.info(f"[{event.message_id[:30]}] Already processed, reusing cached result (LLM skipped)")
@@ -258,6 +335,14 @@ def process_single_event(event) -> ProcessedResult:
             if target.target_type == "user":
                 prefs = get_user_silent_preferences(target.target_id)
                 if prefs: user_preferences_map[target.target_id] = prefs
+
+        # 배치 중 실시간 한도 체크 (병렬 스레드에서 한도 돌파 방지)
+        from app.services.settings_store import SettingsStore
+        mid_batch_settings = SettingsStore()
+        enabled, reason = mid_batch_settings.is_system_enabled()
+        if not enabled:
+            logger.info(f"[BATCH] Daily limit reached mid-batch, skipping {event.subject[:50] if event.subject else ''}")
+            return ProcessedResult(event=event, analysis=AnalysisResult(score=0.0, category=ImportanceCategory.SILENT, reason=f"한도 초과 스킵: {reason}", source=AnalysisSource.RULE), targets=targets, notification_sent=False)
 
         analysis = classifier.classify(event, user_preferences_map)
         # LLM 사용량 정보 가져오기
@@ -372,9 +457,32 @@ def slack_interactive():
     
     Cold Start 타임아웃 방지를 위해 response_url로 비동기 응답 전송
     """
-    if request.method == 'OPTIONS': 
+    if request.method == 'OPTIONS':
         return '', 204
-    
+
+    # Slack 서명 검증 (미설정 시 요청 거부)
+    slack_signing_secret = Config.SLACK_SIGNING_SECRET
+    if not slack_signing_secret:
+        logger.error("[SECURITY] SLACK_SIGNING_SECRET not set. Rejecting Slack request.")
+        return '', 403
+
+    timestamp = request.headers.get('X-Slack-Request-Timestamp', '')
+    slack_signature = request.headers.get('X-Slack-Signature', '')
+    if not timestamp or not slack_signature:
+        return '', 403
+    # 리플레이 공격 방지: 5분 이내 요청만 허용
+    import time
+    if abs(time.time() - float(timestamp)) > 300:
+        return '', 403
+    sig_basestring = f"v0:{timestamp}:{request.get_data(as_text=True)}"
+    computed = 'v0=' + hmac.new(
+        slack_signing_secret.encode(),
+        sig_basestring.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(computed, slack_signature):
+        return '', 403
+
     try:
         payload_raw = request.form.get('payload')
         if not payload_raw: 
@@ -404,8 +512,19 @@ def slack_interactive():
                     try:
                         # 1. 학습 저장 (subject 포함하여 유형 패턴 추출)
                         from app.services.learning_store import save_user_silent_preference, extract_email_type_pattern
-                        save_user_silent_preference(user_id=uid, sender=snd, subject=subj)
+                        save_result = save_user_silent_preference(user_id=uid, sender=snd, subject=subj)
                         type_pattern = extract_email_type_pattern(subj)
+
+                        if not save_result:
+                            logger.error(f"[SLACK] Failed to save silent preference for {uid}, {snd}, type: {type_pattern}")
+                            # 저장 실패 시 사용자에게 에러 알림
+                            error_data = {
+                                "replace_original": False,
+                                "text": f"⚠️ 알림 차단 저장에 실패했습니다. 잠시 후 다시 시도해주세요. (발신자: {snd})"
+                            }
+                            _send_slack_response(resp_url, error_data)
+                            return
+
                         logger.info(f"[SLACK] Saved silent preference for {uid}, {snd}, type: {type_pattern}")
                         
                         # 2. 원래 메시지 블록 유지하면서 버튼만 교체
@@ -425,7 +544,7 @@ def slack_interactive():
                                     if element.get('action_id') == 'silent_forever':
                                         new_elements.append({
                                             "type": "button",
-                                            "text": {"type": "plain_text", "text": "다시 알림 받기 (Undo)"},
+                                            "text": {"type": "plain_text", "text": "다시 알림 받기"},
                                             "value": json.dumps({"sender": snd, "subject": subj}),
                                             "action_id": "undo_silent"
                                         })
@@ -458,7 +577,9 @@ def slack_interactive():
                         _send_slack_response(resp_url, response_data)
                     except Exception as e:
                         logger.error(f"[SLACK] process_silent_forever error: {e}", exc_info=True)
-                
+                        if resp_url:
+                            _send_slack_response(resp_url, {"text": "처리 중 오류가 발생했습니다. 다시 시도해 주세요."})
+
                 if response_url:
                     thread = threading.Thread(target=process_silent_forever, args=(user_id, sender, subject, response_url, original_blocks))
                     thread.start()
@@ -506,13 +627,13 @@ def slack_interactive():
                                     if element.get('action_id') == 'undo_silent':
                                         new_elements.append({
                                             "type": "button",
-                                            "text": {"type": "plain_text", "text": "해당 유형 알림 차단"},
+                                            "text": {"type": "plain_text", "text": "이런 알림 차단"},
                                             "style": "danger",
                                             "value": json.dumps({"sender": snd, "subject": subj}),
                                             "action_id": "silent_forever",
                                             "confirm": {
-                                                "title": {"type": "plain_text", "text": "특정 유형 알림 차단"},
-                                                "text": {"type": "plain_text", "text": "이 발신자가 보내는 비슷한 유형의 메일 알림만 꺼집니다. 내용이 다른 중요한 메일은 평소처럼 정상적으로 알림이 옵니다."},
+                                                "title": {"type": "plain_text", "text": "앞으로 비슷한 알림을 차단할까요?"},
+                                                "text": {"type": "plain_text", "text": "이 발신자가 보내는 비슷한 메일만 알림이 꺼집니다. 다른 중요한 메일은 평소처럼 알림이 옵니다."},
                                                 "confirm": {"type": "plain_text", "text": "차단"},
                                                 "deny": {"type": "plain_text", "text": "취소"}
                                             }
@@ -546,7 +667,9 @@ def slack_interactive():
                         _send_slack_response(resp_url, response_data)
                     except Exception as e:
                         logger.error(f"[SLACK] process_undo_silent error: {e}", exc_info=True)
-                
+                        if resp_url:
+                            _send_slack_response(resp_url, {"text": "처리 중 오류가 발생했습니다. 다시 시도해 주세요."})
+
                 if response_url:
                     thread = threading.Thread(target=process_undo_silent, args=(user_id, sender, subject, response_url, original_blocks))
                     thread.start()
@@ -613,11 +736,11 @@ def slack_interactive():
                             
                             _send_slack_response(resp_url, {"replace_original": True, "blocks": new_blocks})
                         else:
-                            _send_slack_response(resp_url, {"replace_original": False, "text": "❌ Gmail 읽음 처리에 실패했습니다. (권한 또는 메일 ID 확인 필요)"})
+                            _send_slack_response(resp_url, {"replace_original": False, "text": "❌ 읽음 처리에 실패했습니다. 잠시 후 다시 시도해주세요."})
                             
                     except Exception as e:
                         logger.error(f"[SLACK] mark_as_read_gmail error: {e}", exc_info=True)
-                        _send_slack_response(resp_url, {"replace_original": False, "text": f"❌ 시스템 오류: {str(e)}"})
+                        _send_slack_response(resp_url, {"replace_original": False, "text": "❌ 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."})
 
                 if response_url:
                     thread = threading.Thread(target=process_mark_as_read, args=(message_id, owner, response_url, payload.get('message', {}).get('blocks', [])))

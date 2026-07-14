@@ -101,11 +101,19 @@ def extract_email_type_pattern(subject: Optional[str]) -> str:
     prefix = prefix_match.group(1) if prefix_match else ""
     rest = original[len(prefix_match.group(0)):] if prefix_match else original
     
+    # 1-b. 채용 플랫폼(잡코리아, 사람인 등)의 bracket prefix 정규화
+    #   [임원비서_지원안내], [경영진비서_지원안내] → 직무명이 매번 달라지므로 통합
+    if re.match(r'^\[.+?_(지원안내|추천인재|면접안내|채용)\]', original):
+        prefix = ""  # 변동되는 bracket prefix 제거 → 동일 유형으로 매칭
+        rest = re.sub(r'^\[.+?\]\s*', '', original)
+
     # 2. 알려진 패턴 매칭 (우선순위 높음)
     patterns = [
-        # 그리팅 채용 관련
+        # 채용 플랫폼 관련 (잡코리아, 사람인, 그리팅 등)
         (r'.*님이.*지원.*', '채용 지원 알림'),
         (r'.*지원.*공고.*', '채용 지원 알림'),
+        (r'.*공고에\s*지원.*', '채용 지원 알림'),
+        (r'.*추천.*인재.*', '추천 인재 알림'),
         (r'.*면접.*일정.*', '면접 일정 안내'),
         (r'.*채용.*마감.*', '채용 마감 안내'),
         
@@ -229,12 +237,21 @@ def get_user_silent_preferences(user_id: str) -> List[Dict[str, Any]]:
         return []
     
     try:
-        query = db.collection(COLLECTION_USER_FEEDBACK).where("user_id", "==", user_id)
+        query = (db.collection(COLLECTION_USER_FEEDBACK)
+                 .where("user_id", "==", user_id)
+                 .where("preference", "==", "silent"))
         docs = query.stream()
         return [doc.to_dict() for doc in docs]
     except Exception as e:
-        logger.warning(f"Failed to get user preferences: {e}")
-        return []
+        # 복합 인덱스 미생성 시 fallback: user_id만으로 쿼리 후 클라이언트 필터
+        logger.warning(f"Compound query failed (index may be missing), falling back: {e}")
+        try:
+            query = db.collection(COLLECTION_USER_FEEDBACK).where("user_id", "==", user_id)
+            docs = query.stream()
+            return [doc.to_dict() for doc in docs if doc.to_dict().get("preference") == "silent"]
+        except Exception as e2:
+            logger.warning(f"Failed to get user preferences (fallback): {e2}")
+            return []
 
 
 def should_silence_for_user(user_id: str, sender: str, subject: str) -> bool:
@@ -375,8 +392,8 @@ def get_email_event(email_id: str) -> Optional[Dict[str, Any]]:
             return doc.to_dict()
         return None
     except Exception as e:
-        logger.warning(f"Failed to get email event {email_id}: {e}")
-        return None
+        logger.error(f"Firestore error in get_email_event({email_id}): {e}")
+        raise  # Firestore 오류는 호출자에서 처리 (None과 구분 필요)
 
 
 # =============================================

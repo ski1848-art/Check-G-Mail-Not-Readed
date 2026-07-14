@@ -1,5 +1,25 @@
 #!/bin/bash
-# Gmail Important Mail Notifier - Cloud Run Deployment Script
+# ─────────────────────────────────────────────────────
+# Gmail Important Mail Notifier - Cloud Run 배포 스크립트
+#
+# [사용법]
+#   chmod +x deploy.sh && ./deploy.sh
+#
+# [사전 조건]
+#   1. .env 파일에 필수 환경변수 설정
+#   2. gcloud CLI 인증 완료 (gcloud auth login)
+#   3. GOOGLE_APPLICATION_CREDENTIALS 파일 존재
+#
+# [배포 순서]
+#   1. Container Registry에 이미지 빌드/푸시
+#   2. Secret Manager에 서비스 계정 키 업로드
+#   3. Cloud Run에 배포 (환경변수 + 시크릿 설정)
+#   4. Slack Interactive URL용 공개 접근 설정
+#
+# [배포 후 필요 작업]
+#   1. Slack App에 Interactive URL 설정: {SERVICE_URL}/slack/interactive
+#   2. Cloud Scheduler 생성: 5분마다 /run-batch POST 호출
+# ─────────────────────────────────────────────────────
 
 set -e
 
@@ -80,6 +100,9 @@ gcloud run deploy ${SERVICE_NAME} \
     --set-env-vars AWS_REGION="${AWS_REGION:-us-east-1}" \
     --set-env-vars BEDROCK_MODEL_ID="${BEDROCK_MODEL_ID}" \
     --set-env-vars LEARNING_ENABLED="true" \
+    --set-env-vars TOKEN_WATCHER_URL="${TOKEN_WATCHER_URL}" \
+    --set-env-vars TOKEN_WATCHER_KEY="${TOKEN_WATCHER_KEY}" \
+    --set-env-vars INTERNAL_API_KEY="${INTERNAL_API_KEY}" \
     --set-secrets GOOGLE_APPLICATION_CREDENTIALS=gmail-notifier-sa-key:latest \
     --service-account="gmail-notifier-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 

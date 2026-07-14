@@ -1,3 +1,21 @@
+"""
+state_store.py - 중복 알림 방지 상태 관리
+
+[역할]
+  같은 메일에 대해 같은 대상에게 중복 알림을 보내지 않도록 관리.
+  두 가지 중복 방지 메커니즘:
+  1. Message ID 기반: 동일 메일 ID + 동일 대상 → 중복
+  2. Content 기반: 동일 발신자 + 동일 제목 + 동일 대상 (10분 윈도우) → 중복
+
+[구현체]
+  - FileStateStore: 로컬 개발용 (state.json 파일)
+  - FirestoreStateStore: 프로덕션용 (Cloud Run, 다중 인스턴스 지원)
+    - processed_notifications: Message ID 기반 (TTL 7일)
+    - notification_throttling: Content 기반 (TTL 1시간)
+
+[팩토리]
+  create_state_store() → FIRESTORE_PROJECT_ID 설정 시 Firestore, 아니면 File
+"""
 import json
 import os
 import threading
