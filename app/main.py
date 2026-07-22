@@ -141,10 +141,16 @@ def run_batch():
         # ✅ 배치 실행 정보 업데이트
         settings.update_last_batch_info(len(results))
 
-        # ✅ 비용 알림 체크 (한도 대비 임계값 초과 시 변홍주에게 DM)
+        # ✅ 사용량 기반 알림 — daily_usage를 1회만 읽어 두 알림(한도 근접 + 급증)이 공용
+        usage = {}
         try:
-            usage = settings.get_daily_usage()  # daily_usage 1회만 읽기
-            if not usage.get("cost_alert_sent", False):
+            usage = settings.get_daily_usage()
+        except Exception as e:
+            logger.error(f"get_daily_usage failed: {e}")
+
+        # (1) 비용 한도 근접 알림 (한도 대비 임계값 초과 시 담당자에게 DM)
+        try:
+            if usage and not usage.get("cost_alert_sent", False):
                 alert_cfg = settings.get_cost_alert_settings()  # TTL 캐시 경유
                 status = settings.get_system_status()
                 limit_cost = status.get("daily_limit_cost_usd", 5.0)
@@ -161,6 +167,22 @@ def run_batch():
                         settings.mark_cost_alert_sent_today()
         except Exception as e:
             logger.error(f"Cost alert check failed: {e}")
+
+        # (2) 급증 감지 알림 — 고정 한도와 무관하게 최근 평균 대비 급증 시 즉시 통보 (재발 방지 핵심)
+        try:
+            if usage and not usage.get("spike_alert_sent", False):
+                is_spike, spike_detail = settings.check_usage_spike(today_usage=usage)
+                if is_spike:
+                    logger.warning(f"[SPIKE] Usage spike detected: {spike_detail}")
+                    alert_cfg = settings.get_cost_alert_settings()
+                    sent = slack_service.send_usage_spike_alert_dm(
+                        recipient_id=alert_cfg["slack_channel"],
+                        detail=spike_detail,
+                    )
+                    if sent:
+                        settings.mark_spike_alert_sent_today()
+        except Exception as e:
+            logger.error(f"Usage spike check failed: {e}")
 
         return jsonify({
             "status": "success",
@@ -345,8 +367,8 @@ def process_single_event(event) -> ProcessedResult:
             return ProcessedResult(event=event, analysis=AnalysisResult(score=0.0, category=ImportanceCategory.SILENT, reason=f"한도 초과 스킵: {reason}", source=AnalysisSource.RULE), targets=targets, notification_sent=False)
 
         analysis = classifier.classify(event, user_preferences_map)
-        # LLM 사용량 정보 가져오기
-        llm_usage = classifier.get_last_llm_usage()
+        # LLM 사용량 정보 (결과 객체에 담겨 옴 — 병렬 처리 시 스레드 안전)
+        llm_usage = analysis.llm_usage
     final_targets = []
     user_overrides = analysis.raw_data.get("user_overrides", {}) if analysis.raw_data else {}
     
@@ -409,8 +431,14 @@ def process_single_event(event) -> ProcessedResult:
             if llm_usage and (input_tokens or output_tokens):
                 from app.services.settings_store import SettingsStore
                 settings = SettingsStore()
-                # 비용 계산 (Claude Haiku 4.5 기준)
-                cost_usd = ((input_tokens or 0) * 0.80 + (output_tokens or 0) * 4.00) / 1_000_000
+                # 비용 계산 (Claude Haiku 4.5 기준). 캐시 토큰도 반영해 과소측정 방지
+                # (Anthropic 표준 배수: cache write ≈ 1.25x, cache read ≈ 0.1x of input rate).
+                cost_usd = (
+                    (input_tokens or 0) * 0.80
+                    + (output_tokens or 0) * 4.00
+                    + (cache_write_tokens or 0) * 1.00
+                    + (cache_read_tokens or 0) * 0.08
+                ) / 1_000_000
                 settings.increment_daily_usage(
                     calls=1,
                     cost_usd=cost_usd,

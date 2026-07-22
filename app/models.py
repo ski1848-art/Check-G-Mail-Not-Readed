@@ -48,6 +48,9 @@ class AnalysisResult(BaseModel):
     summary: Optional[str] = Field(None, description="AI-generated 3-line summary")
     source: AnalysisSource = AnalysisSource.RULE
     raw_data: Optional[dict] = Field(default_factory=dict)
+    # 이 분류에 사용된 LLM 토큰 사용량(비용 추적용). 병렬 처리 시 공유 상태 대신
+    # 결과 객체에 담아 스레드 안전하게 전달한다. 직렬화에서는 제외.
+    llm_usage: Optional[dict] = Field(default=None, exclude=True)
 
 class NotificationTarget(BaseModel):
     """

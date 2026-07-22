@@ -65,6 +65,9 @@ Cloud Scheduler (5분) → POST /run-batch
       → Firestore 스냅샷 저장
 ```
 
+> **AI 비용 절감**: 중요도 판단(AI)은 본문 없이 수행하고, 알림 대상(NOTIFY)으로 확정된 메일만 본문으로 요약한다.
+> **재발 방지**: 일일 한도 외에 월 비용 상한(`MONTHLY_LIMIT_COST_USD`)과 사용량 급증 감지(`SettingsStore.check_usage_spike` — 최근 평균 대비 총비용/통당 비용 급증 시 Slack 알림)를 적용한다.
+
 ---
 
 ## Admin Web API (Next.js)

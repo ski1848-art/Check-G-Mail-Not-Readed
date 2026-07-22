@@ -43,7 +43,6 @@ class LLMService:
 
     def __init__(self):
         self.model_id = Config.BEDROCK_MODEL_ID
-        self.last_usage = None
         self.client = self._init_client()
         self.tw_client = self._init_tw_client()
         self.tw_model_id = self._extract_model_id()
@@ -97,18 +96,22 @@ class LLMService:
     # ─── 공개 API ────────────────────────────────────────────
 
     def analyze_email(self, event, user_preferences_map=None):
-        self.last_usage = None
         sp = self._build_system_prompt()
-        up = self._build_user_prompt(event, user_preferences_map)
+        # 중요도 '판단'은 본문 없이(제목/발신자/스니펫) 수행 — 비용 절감.
+        # 본문은 알림 대상(NOTIFY)으로 정해진 메일의 요약에만 사용한다(summarize_email).
+        up = self._build_user_prompt(event, user_preferences_map, include_body=False)
         return self._call_llm(sp, up, max_tokens=512, use_cache=True)
 
-    def summarize_email(self, event) -> Optional[str]:
-        """이메일 요약만 수행 (화이트리스트 경로용 경량 호출)"""
+    def summarize_email(self, event) -> tuple:
+        """이메일 요약만 수행 (알림 대상 경로용 경량 호출).
+
+        Returns: (summary: Optional[str], usage: Optional[dict])
+        """
         sp = "이메일을 한국어로 3줄 이내로 요약하세요. 불릿 포인트(•) 형식으로 각 항목을 줄바꿈하여 작성하세요."
         sn = event.raw_data.get('snippet', '') if event.raw_data else ''
         body = ''
         if event.raw_data and event.raw_data.get('body_text'):
-            body = event.raw_data['body_text'][:500]
+            body = event.raw_data['body_text'][:Config.LLM_SUMMARY_BODY_MAX_CHARS]
         up = f"Subject: {event.subject or ''}\nSender: {event.sender}\n"
         if sn:
             up += f"Snippet: {sn}\n"
@@ -116,11 +119,11 @@ class LLMService:
             up += f"Body: {body}"
 
         try:
-            result = self._call_llm_raw(sp, up, max_tokens=150, use_cache=False)
-            return result.strip() if result else None
+            text, usage = self._call_llm_raw(sp, up, max_tokens=150, use_cache=False)
+            return (text.strip() if text else None), usage
         except Exception as e:
             logger.warning(f"summarize_email failed: {e}")
-        return None
+        return None, None
 
     # ─── LLM 호출 오케스트레이션 ──────────────────────────────
 
@@ -131,8 +134,9 @@ class LLMService:
             try:
                 text, usage = self._call_token_watcher(sp, up, max_tokens, use_cache)
                 self._record_tw_success()
-                self.last_usage = usage
-                return self._parse(text)
+                result = self._parse(text)
+                result.llm_usage = usage
+                return result
             except _TokenWatcherError as e:
                 logger.warning(f"Token Watcher v2 fallback: {e}")
                 self._record_tw_failure()
@@ -145,14 +149,14 @@ class LLMService:
         # 2) Bedrock 직접 호출 (폴백)
         return self._call_bedrock(sp, up, max_tokens, use_cache)
 
-    def _call_llm_raw(self, sp, up, max_tokens=150, use_cache=False) -> Optional[str]:
-        """summarize_email용: TW v2 → Bedrock 폴백. 원시 텍스트 반환."""
+    def _call_llm_raw(self, sp, up, max_tokens=150, use_cache=False) -> tuple:
+        """summarize_email용: TW v2 → Bedrock 폴백. (원시 텍스트, usage) 반환."""
         # 1) Token Watcher v2 시도
         if self._should_use_tw():
             try:
-                text, _ = self._call_token_watcher(sp, up, max_tokens, use_cache)
+                text, usage = self._call_token_watcher(sp, up, max_tokens, use_cache)
                 self._record_tw_success()
-                return text
+                return text, usage
             except _TokenWatcherError as e:
                 logger.warning(f"Token Watcher v2 summarize fallback: {e}")
                 self._record_tw_failure()
@@ -162,17 +166,18 @@ class LLMService:
 
         # 2) Bedrock 직접 호출
         if not self.client:
-            return None
+            return None, None
         try:
             r = self.client.messages.create(
                 model=self.model_id, max_tokens=max_tokens, temperature=0.0,
                 system=[{"type": "text", "text": sp}],
                 messages=[{"role": "user", "content": [{"type": "text", "text": up}]}]
             )
-            return "".join(b.text for b in r.content if b.type == "text").strip() or None
+            text = "".join(b.text for b in r.content if b.type == "text").strip() or None
+            return text, self._extract_usage(r)
         except Exception as e:
             logger.warning(f"Bedrock summarize failed: {e}")
-        return None
+        return None, None
 
     # ─── Token Watcher v2 ────────────────────────────────────
 
@@ -276,8 +281,10 @@ class LLMService:
                 system_block["cache_control"] = {"type": "ephemeral"}
             response = self.client.messages.create(model=self.model_id, max_tokens=max_tokens, temperature=0.0, system=[system_block], messages=[{"role": "user", "content": [{"type": "text", "text": up}]}])
             content_text = "".join(b.text for b in response.content if b.type == "text").strip()
-            self.last_usage = self._extract_usage(response)
-            return self._parse(content_text)
+            usage = self._extract_usage(response)
+            result = self._parse(content_text)
+            result.llm_usage = usage
+            return result
         except Exception as e:
             logger.error(f"Bedrock call failed: {e}")
             return AnalysisResult(score=0.5, category=ImportanceCategory.NOTIFY, reason="AI 분석 실패 - 안전을 위해 알림 전송", source=AnalysisSource.LLM)
@@ -300,6 +307,18 @@ class LLMService:
         u=getattr(r,"usage",None)
         if not u: return None
         return {"input_tokens":getattr(u,"input_tokens",0),"output_tokens":getattr(u,"output_tokens",0),"cache_write_tokens":getattr(u,"cache_creation_input_tokens",0),"cache_read_tokens":getattr(u,"cache_read_input_tokens",0),"model_id":self.model_id}
+
+    @staticmethod
+    def _merge_usage(a: Optional[dict], b: Optional[dict]) -> Optional[dict]:
+        """두 LLM usage dict를 합산한다(판단 호출 + 요약 호출 비용 합산용)."""
+        if not a:
+            return dict(b) if b else None
+        if not b:
+            return dict(a)
+        merged = dict(a)
+        for k in ("input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens"):
+            merged[k] = (a.get(k, 0) or 0) + (b.get(k, 0) or 0)
+        return merged
 
     def _build_system_prompt(self):
         return (
@@ -325,13 +344,16 @@ class LLMService:
             '"• 월간 매출 보고서 검토 요청\\n• 전월 대비 15% 증가 확인 필요\\n• 금주 금요일까지 피드백 요청"'
         )
 
-    def _build_user_prompt(self, event, upm=None):
+    def _build_user_prompt(self, event, upm=None, include_body=True):
         sn = event.raw_data.get('snippet','N/A') if event.raw_data else 'N/A'
         p = f"Subject: {event.subject or ''}\nSender: {event.sender}\nRecipients: {', '.join(event.recipients)}\nOwner: {event.owner}\nEventType: {event.event_type}\nSnippet: {sn}"
-        if event.raw_data and event.raw_data.get('body_text'):
+        # 본문은 본문이 꼭 필요한 경우(요약 등, include_body=True)에만 포함.
+        # 중요도 판단(analyze_email)은 include_body=False로 호출하여 비용을 절감한다.
+        if include_body and event.raw_data and event.raw_data.get('body_text'):
             body = event.raw_data['body_text']
-            if len(body) > 2000:
-                body = body[:2000]
+            max_chars = Config.LLM_SUMMARY_BODY_MAX_CHARS
+            if len(body) > max_chars:
+                body = body[:max_chars]
             p += f"\nBody: {body}"
         if upm:
             p += "\n\n### MUTED PATTERNS\n"

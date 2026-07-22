@@ -10,6 +10,8 @@ Firestore의 동적 설정(system_settings)과 함께 사용됨.
 - Google 서비스 계정 (Gmail API, Firestore)
 - 라우팅 소스 (firestore | json)
 - 알림 임계값 (score_threshold_notify)
+- AI 비용 절감 / 사용량 급증 재발방지 (LLM_SUMMARY_BODY_MAX_CHARS,
+  USAGE_SPIKE_MULTIPLIER, USAGE_SPIKE_MIN_CALLS, MONTHLY_LIMIT_COST_USD)
 """
 import os
 import json
@@ -57,6 +59,17 @@ class Config:
     
     # Defaults
     SCORE_THRESHOLD_NOTIFY = 0.50
+
+    # ── AI 비용 절감 / 재발 방지 설정 ───────────────────────────────
+    # 요약(summary) 생성 시 LLM에 전달할 본문 최대 글자 수.
+    # 중요도 '판단'에는 본문을 넣지 않고(비용 절감), 알림 대상(NOTIFY) 요약에만 본문 사용.
+    LLM_SUMMARY_BODY_MAX_CHARS: int = int(os.environ.get("LLM_SUMMARY_BODY_MAX_CHARS", "1000"))
+    # 최근 평균 대비 이 배수 이상으로 오늘 총비용/통당 비용이 뛰면 '급증'으로 판정하여 알림
+    USAGE_SPIKE_MULTIPLIER: float = float(os.environ.get("USAGE_SPIKE_MULTIPLIER", "3.0"))
+    # 급증 판정을 위한 오늘의 최소 표본(LLM 처리 건수) — 표본이 적으면 오탐 방지 위해 판정 보류
+    USAGE_SPIKE_MIN_CALLS: int = int(os.environ.get("USAGE_SPIKE_MIN_CALLS", "20"))
+    # 월 비용 상한(USD) — 초과 시 배치 자동 중단. Firestore system_control에서 재정의 가능
+    MONTHLY_LIMIT_COST_USD: float = float(os.environ.get("MONTHLY_LIMIT_COST_USD", "30.0"))
     
     @classmethod
     def load_routing_rules(cls) -> List[Dict[str, Any]]:

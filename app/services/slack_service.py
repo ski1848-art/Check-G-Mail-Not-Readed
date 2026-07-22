@@ -154,6 +154,48 @@ class SlackService:
             logger.error(f"Unexpected error sending cost alert DM: {e}")
             return False
 
+    def send_usage_spike_alert_dm(self, recipient_id: str, detail: dict) -> bool:
+        """AI 사용량 급증 감지 DM. 최근 평균 대비 급증 시 즉시 통보(고정 한도와 무관)."""
+        if not self.client:
+            logger.warning("Slack client not initialized. Cannot send spike alert.")
+            return False
+        try:
+            kind = detail.get("kind", "사용량 급증")
+            mult = detail.get("multiplier", 0) or 0
+            today_cost = detail.get("today_cost", 0.0)
+            avg_cost = detail.get("avg_cost", 0.0)
+            today_cpc = detail.get("today_cost_per_call", 0.0)
+            recent_cpc = detail.get("recent_cost_per_call", 0.0)
+            days = detail.get("sample_days", 0)
+            date_str = detail.get("date", "")
+            dm_response = self.client.conversations_open(users=[recipient_id])
+            channel_id = dm_response["channel"]["id"]
+            self.client.chat_postMessage(
+                channel=channel_id,
+                text=f"[급증 경고] AI 사용량이 최근 {days}일 평균 대비 급증({kind})했습니다.",
+                blocks=[
+                    {"type": "header", "text": {"type": "plain_text", "text": "🚨 AI 사용량 급증 감지", "emoji": True}},
+                    {"type": "section", "text": {"type": "mrkdwn",
+                        "text": f"*{kind}* — 최근 {days}일 평균의 *{mult:.1f}배 기준*을 넘었습니다."}},
+                    {"type": "section", "fields": [
+                        {"type": "mrkdwn", "text": f"*날짜*\n{date_str}"},
+                        {"type": "mrkdwn", "text": f"*오늘 비용*\n${today_cost:.4f}"},
+                        {"type": "mrkdwn", "text": f"*최근 평균(일)*\n${avg_cost:.4f}"},
+                        {"type": "mrkdwn", "text": f"*통당 비용(오늘/평균)*\n${today_cpc:.6f} / ${recent_cpc:.6f}"},
+                    ]},
+                    {"type": "context", "elements": [{"type": "mrkdwn",
+                        "text": "고정 한도 이하라도 평소보다 크게 늘면 알립니다. 최근 배포/설정 변경을 확인하세요."}]},
+                ]
+            )
+            logger.info(f"Usage spike alert DM sent to {recipient_id}: {kind}, today=${today_cost:.4f}")
+            return True
+        except SlackApiError as e:
+            logger.error(f"Failed to send spike alert DM to {recipient_id}: {e.response['error']}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error sending spike alert DM: {e}")
+            return False
+
     def _build_fallback_text(self, event: GmailEvent, analysis: AnalysisResult) -> str:
         """
         Build fallback text for notifications that don't support blocks.

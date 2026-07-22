@@ -1,19 +1,24 @@
 """
 classifier.py - 이메일 중요도 분류 파이프라인
 
-[3단계 분류 프로세스]
+[4단계 분류 프로세스]
   Step 0-1: 규칙 기반 필터 (_apply_rules)
     - 블랙리스트 도메인 → 즉시 SILENT
     - 스팸 키워드 → 즉시 SILENT
     - 화이트리스트 도메인 → 즉시 NOTIFY (AI 요약은 별도 호출)
-  
+
   Step 2: AI 분석 (LLMService.analyze_email)
-    - 메일 제목/발신자/스니펫을 Claude에게 전달
+    - 메일 제목/발신자/스니펫을 Claude에게 전달 (본문은 전달하지 않음)
     - 사용자별 차단 패턴(user_preferences_map)도 함께 전달
     - JSON 응답: {score, category, reason, summary, user_overrides}
-  
+
   Step 3: 임계값 적용 (_apply_thresholds)
     - AI 점수가 score_threshold_notify 이상이면 NOTIFY, 미만이면 SILENT
+
+  Step 4: 본문 기반 요약 (LLMService.summarize_email) — AI 비용 절감 핵심
+    - 알림 대상(NOTIFY)으로 최종 확정된 메일만 본문을 포함해 요약을 생성
+    - SILENT로 확정된 메일(다수)은 본문을 전혀 읽지 않아 LLM 비용을 절감
+    - Step 0-1에서 화이트리스트로 즉시 NOTIFY 확정된 경우도 동일하게 적용
 
 [설정 소스]
   Firestore system_settings (동적) + config/spam_filter.json (정적 기본값)
@@ -32,10 +37,6 @@ class Classifier:
     def __init__(self):
         self.llm_service = LLMService()
         self.settings_store = SettingsStore()
-
-    def get_last_llm_usage(self) -> Optional[Dict[str, int]]:
-        """마지막 LLM 호출의 토큰 사용량 반환"""
-        return self.llm_service.last_usage
 
     def _get_filter_config(self):
         """환경변수/JSON 기반 기본값과 Firestore 설정을 결합하여 반환"""
@@ -77,8 +78,9 @@ class Classifier:
             if rule_result.category == ImportanceCategory.NOTIFY:
                 # 규칙으로 알림 대상(화이트리스트 등)인 경우 요약만 경량 호출 (전체 분류 불필요)
                 logger.info(f"[{event.message_id}] RULE is NOTIFY, calling summarize_email for summary...")
-                summary = self.llm_service.summarize_email(event)
+                summary, usage = self.llm_service.summarize_email(event)
                 rule_result.summary = self._validate_summary(summary)
+                rule_result.llm_usage = usage
 
             logger.info(f"[{event.message_id}] Classified by RULE: {rule_result.category}")
             return rule_result
@@ -92,6 +94,17 @@ class Classifier:
 
         # Step 3: Thresholding (Refine LLM result based on thresholds)
         final_result = self._apply_thresholds(llm_result, config)
+
+        # Step 4: 알림 대상(NOTIFY)으로 확정된 메일만 본문 기반 요약 생성.
+        # SILENT(무시할) 메일은 본문을 읽지 않아 비용을 절감한다.
+        if final_result.category == ImportanceCategory.NOTIFY:
+            logger.info(f"[{event.message_id}] NOTIFY → calling summarize_email (with body)...")
+            summary, usage = self.llm_service.summarize_email(event)
+            validated = self._validate_summary(summary)
+            if validated:
+                final_result.summary = validated
+            final_result.llm_usage = self.llm_service._merge_usage(final_result.llm_usage, usage)
+
         logger.info(f"[{event.message_id}] Classified by LLM: {final_result.category} (Score: {final_result.score})")
 
         return final_result
