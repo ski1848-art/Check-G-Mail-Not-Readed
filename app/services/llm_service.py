@@ -107,7 +107,16 @@ class LLMService:
 
         Returns: (summary: Optional[str], usage: Optional[dict])
         """
-        sp = "이메일을 한국어로 3줄 이내로 요약하세요. 불릿 포인트(•) 형식으로 각 항목을 줄바꿈하여 작성하세요."
+        sp = (
+            "이메일을 한국어로 요약하세요.\n"
+            "## 규칙\n"
+            "- 정확히 3줄 이내로, 각 줄은 불릿 포인트(•)로 시작하고 줄바꿈(\\n)으로 구분\n"
+            "- 제목·머리말 줄을 넣지 말 것 (예: '# 요약', '요약:' 같은 줄 금지)\n"
+            "- 꾸밈 기호 금지: **굵게**, __, 앞머리 #, ~취소선~ 등 마크다운 장식을 쓰지 말 것 (순수 텍스트만)\n"
+            "- 핵심 정보(누가·무엇을·왜)만 간결하게, 최소 10자 이상\n"
+            "## 형식 예시\n"
+            "• 첫번째 핵심 내용\n• 두번째 핵심 내용\n• 세번째 핵심 내용"
+        )
         sn = event.raw_data.get('snippet', '') if event.raw_data else ''
         body = ''
         if event.raw_data and event.raw_data.get('body_text'):

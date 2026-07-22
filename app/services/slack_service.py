@@ -20,6 +20,7 @@ slack_service.py - Slack Bot 알림 전송 서비스
 """
 from typing import List
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -33,6 +34,39 @@ def to_kst(dt: datetime) -> datetime:
         # naive datetime이면 UTC로 간주
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(KST)
+
+
+# 표준 마크다운 → Slack mrkdwn 정규화용 패턴
+# (Slack은 굵게가 별표 하나 *text*, 헤더(#) 문법 미지원)
+_MD_HEADING_RE = re.compile(r'^[ \t]{0,3}#{1,6}[ \t]+', re.MULTILINE)  # 줄머리 #~###### 마크
+_MD_BOLD_RE = re.compile(r'\*\*(.+?)\*\*')                             # **굵게** → *굵게*
+_MD_STRIKE_RE = re.compile(r'~~(.+?)~~')                              # ~~취소선~~ → ~취소선~
+
+
+def normalize_mrkdwn(text: str) -> str:
+    """AI가 만든 표준 마크다운을 Slack이 알아듣는 mrkdwn으로 정규화한다.
+
+    두 가지 일을 한다:
+    1) 표시 정규화 — Slack mrkdwn은 굵게가 별표 하나(*text*)이고 # 헤더 문법을
+       지원하지 않으므로, 표준 마크다운(**굵게**, ~~취소선~~, # 제목)이 화면에
+       기호 그대로 노출되는 것을 막는다. 요약 프롬프트에서 이미 장식을 금지하지만,
+       그래도 섞여 나올 경우를 대비한 방어적 후처리다.
+    2) Slack 특수문자(&, <, >) 이스케이프 — 요약은 외부 이메일 본문에서 파생된
+       LLM 자유 텍스트라, 악의적 메일이 요약에 <url|위장문구> 형태를 심으면 Slack에
+       위장 링크로 렌더될 수 있다. 이를 리터럴로 무력화한다(링크 위조 심층방어).
+
+    주의: __굵게__(밑줄 두 개)는 변환하지 않는다. __init__ 등 개발 용어를 볼드로
+    오변환하는 부작용이 방어 이득보다 크기 때문(요약 프롬프트가 이미 __ 금지).
+    """
+    if not text:
+        return text
+    # 1) Slack 특수문자 이스케이프 (위장 링크/멘션 injection 심층방어). & 를 먼저.
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # 2) 표준 마크다운 → Slack mrkdwn 정규화
+    text = _MD_HEADING_RE.sub("", text)            # 줄머리 헤더 마크 제거(텍스트는 유지)
+    text = _MD_BOLD_RE.sub(r"*\1*", text)          # **굵게** → *굵게*
+    text = _MD_STRIKE_RE.sub(r"~\1~", text)        # ~~취소선~~ → ~취소선~
+    return text.strip()
 
 from app.config import Config
 from app.models import NotificationTarget, GmailEvent, AnalysisResult
@@ -261,11 +295,12 @@ class SlackService:
 
         # Add AI Summary if available
         if analysis.summary:
+            summary_text = normalize_mrkdwn(analysis.summary)
             blocks.append({
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"📝 *AI 핵심 요약*\n{analysis.summary}"
+                    "text": f"📝 *AI 핵심 요약*\n{summary_text}"
                 }
             })
 
