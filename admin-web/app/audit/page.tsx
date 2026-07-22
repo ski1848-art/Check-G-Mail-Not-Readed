@@ -11,6 +11,7 @@
  */
 "use client";
 import { useState, useEffect } from "react";
+import { ScrollText, User, Clock, Code2 } from "lucide-react";
 
 export default function AuditPage() {
   const [logs, setLogs] = useState<any[]>([]);
@@ -68,7 +69,7 @@ export default function AuditPage() {
 
       {logs.length === 0 ? (
         <div className="card p-16 text-center">
-          <div className="text-5xl mb-4">📋</div>
+          <ScrollText className="mx-auto mb-4 h-12 w-12 text-gray-300" />
           <p className="text-sm font-medium text-gray-600">기록된 변경 이력이 없습니다</p>
         </div>
       ) : (
@@ -85,10 +86,10 @@ export default function AuditPage() {
                   </div>
                   <div className="flex items-center gap-4 text-xs text-gray-500">
                     <span className="flex items-center gap-1">
-                      👤 {log.actor_email}
+                      <User className="h-3.5 w-3.5" /> {log.actor_email}
                     </span>
                     <span className="flex items-center gap-1">
-                      🕐 {log.created_at 
+                      <Clock className="h-3.5 w-3.5" /> {log.created_at
                         ? new Date(log.created_at._seconds * 1000).toLocaleString("ko-KR", {
                             year: "numeric",
                             month: "short",
@@ -106,9 +107,14 @@ export default function AuditPage() {
                   <summary className="cursor-pointer text-xs text-blue-600 hover:text-blue-800 font-medium">
                     상세 정보 보기
                   </summary>
-                  <pre className="mt-2 rounded-lg bg-gray-50 p-3 text-xs text-gray-600 overflow-x-auto border border-gray-200">
-                    {JSON.stringify(log.after, null, 2)}
-                  </pre>
+                  <div className="mt-2 overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+                    <div className="flex items-center gap-1.5 border-b border-gray-200 bg-gray-100 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+                      <Code2 className="h-3 w-3" /> 기술 상세
+                    </div>
+                    <pre className="overflow-x-auto p-3 text-xs text-gray-600">
+                      {JSON.stringify(log.after, null, 2)}
+                    </pre>
+                  </div>
                 </details>
               )}
             </div>

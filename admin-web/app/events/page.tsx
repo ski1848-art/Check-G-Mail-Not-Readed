@@ -17,7 +17,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { format } from "date-fns";
 import { ko } from "date-fns/locale";
-import { RefreshCw, Search, Calendar, Mail, User, Info, Bell, BellOff } from "lucide-react";
+import { RefreshCw, Search, Calendar, Mail, User, Info, Bell, BellOff, AlertTriangle, CheckCircle2, Ban, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/toast";
 
 interface EmailEvent {
@@ -210,7 +210,7 @@ export default function EventsPage() {
           </div>
 
           <button 
-            className={`btn ${loading ? 'bg-gray-100 text-gray-400' : 'btn-outline'} flex items-center gap-2`}
+            className="btn btn-outline flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={() => fetchEvents()}
             disabled={loading}
           >
@@ -252,8 +252,8 @@ export default function EventsPage() {
                 className="input w-[130px] py-1 h-10 text-sm"
               >
                 <option value="all">전체</option>
-                <option value="notify">✅ 알림 전송</option>
-                <option value="silent">🔕 무시됨</option>
+                <option value="notify">알림 전송</option>
+                <option value="silent">무시됨</option>
               </select>
             </div>
           </div>
@@ -261,7 +261,10 @@ export default function EventsPage() {
 
         {error && (
           <div role="alert" className="mb-4 flex items-center justify-between rounded-lg border border-red-200 bg-red-50 px-4 py-3">
-            <span className="text-sm font-medium text-red-700">⚠️ 목록을 불러오지 못했습니다. 표시된 내용은 이전 데이터일 수 있습니다.</span>
+            <span className="flex items-center gap-1.5 text-sm font-medium text-red-700">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              목록을 불러오지 못했습니다. 표시된 내용은 이전 데이터일 수 있습니다.
+            </span>
             <button onClick={() => fetchEvents()} className="text-sm font-semibold text-red-700 underline hover:text-red-800">다시 시도</button>
           </div>
         )}
@@ -287,7 +290,10 @@ export default function EventsPage() {
               {loading ? (
                 <tr>
                   <td colSpan={7} className="h-32 text-center text-gray-500">
-                    데이터를 불러오는 중...
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      데이터를 불러오는 중...
+                    </span>
                   </td>
                 </tr>
               ) : !error && filteredEvents.length === 0 ? (
@@ -304,9 +310,13 @@ export default function EventsPage() {
                     </td>
                     <td className="px-4 py-4">
                       {event.final_category === "notify" ? (
-                        <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">알림</span>
+                        <span className="badge bg-green-50 px-2 py-1 text-green-700 ring-1 ring-inset ring-green-600/20">
+                          <CheckCircle2 className="h-3 w-3" /> 알림
+                        </span>
                       ) : (
-                        <span className="inline-flex items-center rounded-full bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">무시</span>
+                        <span className="badge bg-gray-50 px-2 py-1 text-gray-600 ring-1 ring-inset ring-gray-500/10">
+                          <Ban className="h-3 w-3" /> 무시
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-4">
@@ -328,7 +338,7 @@ export default function EventsPage() {
                         onClick={() => setSelectedEvent(event)}
                         className={`inline-flex items-center justify-center w-7 h-7 rounded-full transition-all border
                           ${event.reason
-                            ? 'bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-100'
+                            ? 'bg-blue-50 text-blue-600 border-blue-100 hover:bg-blue-100'
                             : 'bg-gray-50 text-gray-400 border-gray-200 hover:bg-gray-100'}`}
                         title="상세 보기"
                       >
@@ -369,7 +379,7 @@ export default function EventsPage() {
                         <button
                           onClick={() => handleManualTrigger(event.id)}
                           disabled={triggeringId === event.id}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all
+                          className={`btn gap-1.5 px-2.5 py-1.5 text-xs font-semibold transition-all
                             ${triggeringId === event.id 
                               ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
                               : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95 shadow-sm hover:shadow'}`}
@@ -381,7 +391,7 @@ export default function EventsPage() {
                         <button
                           onClick={() => handleManualBlock(event.id)}
                           disabled={blockingId === event.id}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all
+                          className={`btn gap-1.5 px-2.5 py-1.5 text-xs font-semibold transition-all
                             ${blockingId === event.id 
                               ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
                               : 'bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-600 border border-gray-200 hover:border-red-200 active:scale-95'}`}
@@ -401,7 +411,10 @@ export default function EventsPage() {
         {/* 모바일: 카드뷰 */}
         <div className="md:hidden space-y-3">
           {loading ? (
-            <div className="py-10 text-center text-sm text-gray-500">데이터를 불러오는 중...</div>
+            <div className="py-10 flex items-center justify-center gap-2 text-sm text-gray-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              데이터를 불러오는 중...
+            </div>
           ) : !error && filteredEvents.length === 0 ? (
             <div className="py-10 text-center text-sm text-gray-500">표시할 이력이 없습니다.</div>
           ) : (
@@ -410,9 +423,13 @@ export default function EventsPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="font-semibold text-gray-900 text-sm line-clamp-2">{event.subject || "(제목 없음)"}</div>
                   {event.final_category === "notify" ? (
-                    <span className="shrink-0 inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">알림</span>
+                    <span className="badge shrink-0 bg-green-50 px-2 py-1 text-green-700 ring-1 ring-inset ring-green-600/20">
+                      <CheckCircle2 className="h-3 w-3" /> 알림
+                    </span>
                   ) : (
-                    <span className="shrink-0 inline-flex items-center rounded-full bg-gray-50 px-2 py-1 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">무시</span>
+                    <span className="badge shrink-0 bg-gray-50 px-2 py-1 text-gray-600 ring-1 ring-inset ring-gray-500/10">
+                      <Ban className="h-3 w-3" /> 무시
+                    </span>
                   )}
                 </div>
                 <div className="mt-2 space-y-1 text-[11px] text-gray-500">
@@ -423,14 +440,14 @@ export default function EventsPage() {
                   <div className="flex items-center gap-3 text-[11px] text-gray-500">
                     <span>{event.timestamp ? format(new Date(event.timestamp), "MM/dd HH:mm", { locale: ko }) : "-"}</span>
                     <span>AI {event.llm_score_raw?.toFixed(2) || "0.00"}</span>
-                    <button onClick={() => setSelectedEvent(event)} className="text-indigo-600 underline">사유</button>
+                    <button onClick={() => setSelectedEvent(event)} className="inline-flex min-h-[40px] items-center px-1 text-blue-600 underline">사유</button>
                   </div>
                   {event.final_category === "silent" ? (
-                    <button onClick={() => handleManualTrigger(event.id)} disabled={triggeringId === event.id} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold ${triggeringId === event.id ? 'bg-gray-100 text-gray-400' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                    <button onClick={() => handleManualTrigger(event.id)} disabled={triggeringId === event.id} className={`btn min-h-[40px] gap-1.5 px-3 py-2 text-xs font-semibold ${triggeringId === event.id ? 'bg-gray-100 text-gray-400' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
                       <Bell className="h-3 w-3" /> {triggeringId === event.id ? '전송 중' : '알림 전송'}
                     </button>
                   ) : (
-                    <button onClick={() => handleManualBlock(event.id)} disabled={blockingId === event.id} className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border ${blockingId === event.id ? 'bg-gray-100 text-gray-400 border-gray-200' : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-red-50 hover:text-red-600'}`}>
+                    <button onClick={() => handleManualBlock(event.id)} disabled={blockingId === event.id} className={`btn min-h-[40px] gap-1.5 px-3 py-2 text-xs font-semibold border ${blockingId === event.id ? 'bg-gray-100 text-gray-400 border-gray-200' : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-red-50 hover:text-red-600'}`}>
                       <BellOff className="h-3 w-3" /> {blockingId === event.id ? '처리 중' : '앞으로 차단'}
                     </button>
                   )}
@@ -493,14 +510,18 @@ export default function EventsPage() {
                   <div className="flex items-center gap-2">
                     <span className="text-gray-500">카테고리: </span>
                     {selectedEvent.final_category === "notify" ? (
-                      <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">알림</span>
+                      <span className="badge bg-green-50 px-2 py-0.5 text-green-700 ring-1 ring-inset ring-green-600/20">
+                        <CheckCircle2 className="h-3 w-3" /> 알림
+                      </span>
                     ) : (
-                      <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">무시</span>
+                      <span className="badge bg-gray-100 px-2 py-0.5 text-gray-600 ring-1 ring-inset ring-gray-500/10">
+                        <Ban className="h-3 w-3" /> 무시
+                      </span>
                     )}
                   </div>
                   <div>
                     <span className="text-gray-500">점수: </span>
-                    <span className="font-bold text-indigo-600">{selectedEvent.llm_score_raw?.toFixed(2) ?? "0.00"}</span>
+                    <span className="font-bold text-blue-600">{selectedEvent.llm_score_raw?.toFixed(2) ?? "0.00"}</span>
                   </div>
                   <div>
                     <span className="text-gray-500">분류 소스: </span>
@@ -515,7 +536,7 @@ export default function EventsPage() {
               {selectedEvent.reason && (
                 <div className="space-y-2">
                   <p className="text-sm font-semibold text-gray-700 uppercase tracking-wider">AI 판단 사유</p>
-                  <p className="text-sm text-gray-700 bg-indigo-50 rounded-lg p-3 border border-indigo-100 leading-relaxed">
+                  <p className="text-sm text-gray-700 bg-blue-50 rounded-lg p-3 border border-blue-100 leading-relaxed">
                     {selectedEvent.reason}
                   </p>
                 </div>
@@ -528,13 +549,13 @@ export default function EventsPage() {
                   <div className="flex flex-wrap gap-1.5">
                     {selectedEvent.slack_targets_with_names?.length ? (
                       selectedEvent.slack_targets_with_names.map(t => (
-                        <span key={t.id} className="text-xs px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100 font-medium">
+                        <span key={t.id} className="text-xs px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100 font-medium">
                           {t.name}
                         </span>
                       ))
                     ) : (
                       selectedEvent.slack_targets.map(t => (
-                        <span key={t} className="text-xs px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100 font-medium">
+                        <span key={t} className="text-xs px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100 font-medium">
                           {t}
                         </span>
                       ))
@@ -547,7 +568,7 @@ export default function EventsPage() {
             <div className="px-6 py-4 border-t border-gray-100 flex justify-end">
               <button
                 onClick={() => setSelectedEvent(null)}
-                className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
               >
                 닫기
               </button>

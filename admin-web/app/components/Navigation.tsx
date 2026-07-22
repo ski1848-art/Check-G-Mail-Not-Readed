@@ -7,7 +7,7 @@
  *   - 현재 경로 하이라이트 (usePathname)
  *   - 사용자 프로필 표시 + 로그아웃 링크
  * 
- * 참고: 현재 layout.tsx에서는 이 컴포넌트 대신 인라인 네비게이션을 사용 중.
+ * 사용처: layout.tsx에서 로그인된 사용자에게 이 컴포넌트를 렌더링한다.
  */
 "use client";
 import { useState, useEffect } from "react";
@@ -61,7 +61,7 @@ export function Navigation({ session }: NavigationProps) {
           {/* 로고 */}
           <div className="flex items-center gap-8">
             <Link href="/" className="flex items-center gap-2.5 group">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent shadow-lg shadow-primary/20 group-hover:shadow-primary/30 transition-shadow">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 shadow-sm group-hover:bg-blue-700 transition-colors">
                 <Mail className="h-5 w-5 text-white" />
               </div>
               <span className="font-bold text-lg tracking-tight hidden sm:block text-gray-900">
@@ -120,7 +120,7 @@ export function Navigation({ session }: NavigationProps) {
                 <img
                   src={session.user.image}
                   alt="프로필"
-                  className="h-9 w-9 rounded-full ring-2 ring-border"
+                  className="h-9 w-9 rounded-full ring-1 ring-border"
                 />
               )}
             </div>
@@ -139,6 +139,8 @@ export function Navigation({ session }: NavigationProps) {
             {/* 모바일 메뉴 버튼 */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-label="메뉴"
+              aria-expanded={mobileMenuOpen}
               className="flex md:hidden h-9 w-9 items-center justify-center rounded-xl
                          text-muted-foreground hover:text-foreground hover:bg-secondary
                          transition-all duration-200"

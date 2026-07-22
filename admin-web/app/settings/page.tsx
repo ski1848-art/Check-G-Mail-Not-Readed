@@ -12,7 +12,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { Slider } from "@/components/ui/slider";
-import { RotateCcw, Save, BrainCircuit, Clock, ShieldCheck, Plus, X, AlertTriangle } from "lucide-react";
+import { RotateCcw, Save, BrainCircuit, Clock, ShieldCheck, Plus, X, AlertTriangle, AlertCircle } from "lucide-react";
 import { useToast } from "@/components/ui/toast";
 
 interface Settings {
@@ -99,11 +99,19 @@ export default function SettingsPage() {
     });
   };
 
-  if (loading) return <div className="p-8 text-center text-gray-500">설정을 불러오는 중...</div>;
+  if (loading) return (
+    <div className="flex items-center justify-center py-12">
+      <div className="flex items-center gap-3">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-600 border-t-transparent"></div>
+        <p className="text-sm text-gray-600">설정을 불러오는 중...</p>
+      </div>
+    </div>
+  );
   if (!settings) return (
-    <div className="p-8 text-center">
-      <p className="font-medium text-red-700">⚠️ 설정을 불러오지 못했습니다.</p>
-      <button onClick={fetchSettings} className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">다시 시도</button>
+    <div className="card mx-auto mt-12 max-w-md p-8 text-center">
+      <AlertCircle className="mx-auto mb-3 h-10 w-10 text-red-400" />
+      <p className="font-medium text-red-700">설정을 불러오지 못했습니다.</p>
+      <button onClick={fetchSettings} className="btn btn-primary mt-3">다시 시도</button>
     </div>
   );
 
@@ -269,7 +277,7 @@ export default function SettingsPage() {
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
                   <label className="text-sm font-semibold text-gray-700">알림 임계값 (%)</label>
-                  <span className="text-3xl font-bold text-indigo-600">
+                  <span className="text-3xl font-bold text-blue-600">
                     {settings.cost_alert_threshold_percent ?? 80}%
                   </span>
                 </div>
@@ -280,13 +288,13 @@ export default function SettingsPage() {
                   step={5}
                   value={settings.cost_alert_threshold_percent ?? 80}
                   onChange={(e) => setSettings({ ...settings, cost_alert_threshold_percent: parseInt(e.target.value) })}
-                  className="w-full accent-indigo-600"
+                  className="w-full accent-blue-600"
                 />
                 <div className="flex justify-between text-[11px] text-gray-400 font-medium uppercase tracking-wider">
                   <span>10% (민감)</span>
                   <span>100% (한도 초과 시에만)</span>
                 </div>
-                <p className="text-xs text-gray-500 bg-indigo-50 p-3 rounded-lg border border-indigo-100">
+                <p className="text-xs text-gray-500 bg-blue-50 p-3 rounded-lg border border-blue-100">
                   예: 80% 설정 시 — 일일 비용 한도의 80%에 도달하면 Slack 채널에 경고 메시지를 전송합니다.
                 </p>
               </div>

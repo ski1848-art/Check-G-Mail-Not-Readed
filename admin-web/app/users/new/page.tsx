@@ -14,6 +14,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useToast } from "@/components/ui/toast";
+import { Mail, ArrowLeft } from "lucide-react";
 
 export default function NewUserPage() {
   const router = useRouter();
@@ -81,8 +82,8 @@ export default function NewUserPage() {
   return (
     <div className="max-w-2xl space-y-6">
       <div className="flex items-center gap-4">
-        <Link href="/users" className="text-2xl hover:text-blue-600">
-          ←
+        <Link href="/users" className="text-gray-500 hover:text-blue-600" aria-label="목록으로">
+          <ArrowLeft className="h-5 w-5" />
         </Link>
         <div>
           <h1 className="text-2xl font-bold text-gray-900">사용자 추가</h1>
@@ -152,7 +153,7 @@ export default function NewUserPage() {
             <div className="flex flex-wrap gap-2 pt-2">
               {formData.gmail_accounts.map((email) => (
                 <span key={email} className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm text-blue-700">
-                  📧 {email}
+                  <Mail className="h-3.5 w-3.5" /> {email}
                   <button
                     type="button"
                     onClick={() => removeGmail(email)}

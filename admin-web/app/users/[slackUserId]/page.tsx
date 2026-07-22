@@ -18,6 +18,7 @@ import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import { useToast } from "@/components/ui/toast";
+import { Mail, ArrowLeft, BellOff, AlertTriangle } from "lucide-react";
 
 interface Preference {
   id: string;
@@ -184,8 +185,8 @@ export default function EditUserPage() {
     <div className="max-w-4xl mx-auto space-y-8 pb-12">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Link href="/users" className="text-2xl hover:text-blue-600">
-            ←
+          <Link href="/users" className="text-gray-500 hover:text-blue-600" aria-label="목록으로">
+            <ArrowLeft className="h-5 w-5" />
           </Link>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">사용자 설정 및 이력</h1>
@@ -263,7 +264,7 @@ export default function EditUserPage() {
                 <div className="flex flex-wrap gap-2 pt-2">
                   {formData.gmail_accounts.map((email) => (
                     <span key={email} className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm text-blue-700">
-                      📧 {email}
+                      <Mail className="h-3.5 w-3.5" /> {email}
                       <button
                         type="button"
                         onClick={() => removeGmail(email)}
@@ -338,7 +339,7 @@ export default function EditUserPage() {
         <div className="space-y-6">
           <div className="card p-6 space-y-6 bg-amber-50/30 border-amber-100">
             <div className="flex items-center gap-2 border-b border-amber-200 pb-2">
-              <span className="text-xl">🔕</span>
+              <BellOff className="h-5 w-5 text-amber-600" />
               <h2 className="text-lg font-semibold text-amber-900">사용자 차단 목록</h2>
             </div>
             <p className="text-xs text-amber-700">
@@ -387,10 +388,10 @@ export default function EditUserPage() {
 
       {showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="card p-6 max-w-sm w-full mx-4 shadow-xl">
+          <div className="card p-6 max-w-sm w-full mx-4 shadow-lg">
             <div className="flex items-start gap-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 text-2xl">
-                ⚠️
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100">
+                <AlertTriangle className="h-5 w-5 text-red-600" />
               </div>
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">사용자 삭제</h3>

@@ -7,14 +7,15 @@
  */
 "use client";
 import { signIn } from "next-auth/react";
+import { Mail } from "lucide-react";
 
 export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-blue-50 via-white to-blue-50 p-6">
       <div className="w-full max-w-md space-y-8">
         <div className="text-center space-y-3">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 shadow-lg shadow-blue-500/30 text-4xl">
-            📧
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-50 text-blue-600">
+            <Mail className="h-8 w-8" />
           </div>
           <h1 className="text-3xl font-bold text-gray-900">Notifier Admin</h1>
           <p className="text-sm text-gray-600">Gmail 알림 서비스 관리 콘솔</p>
