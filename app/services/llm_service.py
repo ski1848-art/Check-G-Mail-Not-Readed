@@ -24,6 +24,7 @@ from anthropic import AnthropicBedrock
 from app.config import Config
 from app.models import GmailEvent, AnalysisResult, ImportanceCategory, AnalysisSource
 from app.utils.logger import get_logger
+from app.utils.text_utils import strip_quoted_reply
 
 logger = get_logger("llm_service")
 
@@ -120,7 +121,10 @@ class LLMService:
         sn = event.raw_data.get('snippet', '') if event.raw_data else ''
         body = ''
         if event.raw_data and event.raw_data.get('body_text'):
-            body = event.raw_data['body_text'][:Config.LLM_SUMMARY_BODY_MAX_CHARS]
+            # 회신에 딸려온 이전 대화(인용)를 제거해 '이번 새 내용'만 요약 대상으로 삼는다.
+            # (옛 대화가 요약에 혼입되는 문제 방지 + 입력 토큰 절감)
+            cleaned = strip_quoted_reply(event.raw_data['body_text']) or ''
+            body = cleaned[:Config.LLM_SUMMARY_BODY_MAX_CHARS]
         up = f"Subject: {event.subject or ''}\nSender: {event.sender}\n"
         if sn:
             up += f"Snippet: {sn}\n"
@@ -128,7 +132,9 @@ class LLMService:
             up += f"Body: {body}"
 
         try:
-            text, usage = self._call_llm_raw(sp, up, max_tokens=150, use_cache=False)
+            # 3줄 한국어(+영문 용어 혼합) 요약이 중간에 잘리지 않도록 출력 상한을 넉넉히 둔다.
+            # 실제 출력은 3줄뿐이라 과금은 출력분만 발생(상한만 확대, 비용 영향 미미).
+            text, usage = self._call_llm_raw(sp, up, max_tokens=400, use_cache=False)
             return (text.strip() if text else None), usage
         except Exception as e:
             logger.warning(f"summarize_email failed: {e}")
@@ -158,7 +164,7 @@ class LLMService:
         # 2) Bedrock 직접 호출 (폴백)
         return self._call_bedrock(sp, up, max_tokens, use_cache)
 
-    def _call_llm_raw(self, sp, up, max_tokens=150, use_cache=False) -> tuple:
+    def _call_llm_raw(self, sp, up, max_tokens=400, use_cache=False) -> tuple:
         """summarize_email용: TW v2 → Bedrock 폴백. (원시 텍스트, usage) 반환."""
         # 1) Token Watcher v2 시도
         if self._should_use_tw():
