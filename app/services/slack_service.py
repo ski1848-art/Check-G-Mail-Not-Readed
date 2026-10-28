@@ -18,7 +18,7 @@ slack_service.py - Slack Bot 알림 전송 서비스
   - 읽음 처리: mark_as_read_gmail → Gmail API로 UNREAD 라벨 제거
   - 해당 유형 알림 차단: silent_forever → 학습 데이터 저장 (발신자+유형 패턴)
 """
-from typing import List
+from typing import List, Optional
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -67,6 +67,46 @@ def normalize_mrkdwn(text: str) -> str:
     text = _MD_BOLD_RE.sub(r"*\1*", text)          # **굵게** → *굵게*
     text = _MD_STRIKE_RE.sub(r"~\1~", text)        # ~~취소선~~ → ~취소선~
     return text.strip()
+
+
+# Slack header 블록(plain_text)은 150자 한도. 한도를 넘기면 chat.postMessage가
+# invalid_blocks 로 거절되고, 그러면 처리 완료 표시가 안 남아 메일이 읽지 않음 상태인
+# 동안 5분마다 재시도·재실패가 반복된다(운영 관찰 2026-10-28: 제목 175~200자인 AWS
+# 안내·일본 거래처 회신 체인 → 알림 영구 누락, 30일간 알림 945건 중 9건 유실).
+# 예전 코드는 제목을 150자로 자른 뒤 접두어 "📧 "를 덧붙여 152자가 되는 실수가 있었다.
+# 길이는 UTF-16 단위로 센다(이모지처럼 BMP 밖 문자는 2). Slack이 코드포인트로 세더라도
+# 이 기준이 항상 같거나 더 보수적이라 안전하다.
+SLACK_HEADER_MAX_LEN = 150
+HEADER_SAFETY_MARGIN = 5
+HEADER_TOTAL_MAX_LEN = SLACK_HEADER_MAX_LEN - HEADER_SAFETY_MARGIN   # 접두어 포함 상한(UTF-16 단위)
+HEADER_PREFIX = "📧 "
+HEADER_ELLIPSIS = "..."
+
+
+def utf16_len(text: str) -> int:
+    """Slack 길이 한도 계산용 — UTF-16 코드 유닛 수(BMP 밖 문자는 2로 계산)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def build_header_text(subject: Optional[str]) -> str:
+    """메일 제목으로 Slack header 블록 텍스트를 만든다(접두어 포함 145 유닛 이내 보장).
+
+    상한 안에 들면 제목 그대로, 넘으면 앞부분만 남기고 "..."를 붙인다.
+    문자 단위로 누적하므로 서로게이트 쌍(이모지)을 중간에서 자르지 않는다.
+    """
+    text = subject or "(제목 없음)"
+    budget = HEADER_TOTAL_MAX_LEN - utf16_len(HEADER_PREFIX)
+    if utf16_len(text) > budget:
+        body_budget = budget - utf16_len(HEADER_ELLIPSIS)
+        kept, used = [], 0
+        for ch in text:
+            w = utf16_len(ch)
+            if used + w > body_budget:
+                break
+            kept.append(ch)
+            used += w
+        text = "".join(kept) + HEADER_ELLIPSIS
+    return f"{HEADER_PREFIX}{text}"
 
 from app.config import Config
 from app.models import NotificationTarget, GmailEvent, AnalysisResult
@@ -270,17 +310,13 @@ class SlackService:
         # Gmail link
         gmail_link = f"https://mail.google.com/mail/u/0/#search/rfc822msgid:{event.message_id}"
         
-        # Header text
-        header_text = event.subject or "(제목 없음)"
-        if len(header_text) > 150:
-            header_text = header_text[:147] + "..."
-        
+        # header 블록: 접두어 포함 145 유닛(UTF-16) 이내 보장 — Slack 한도 150, build_header_text 참고
         blocks = [
             {
                 "type": "header",
                 "text": {
                     "type": "plain_text",
-                    "text": f"📧 {header_text}",
+                    "text": build_header_text(event.subject),
                     "emoji": True
                 }
             },
@@ -329,7 +365,7 @@ class SlackService:
                         "value": json.dumps({
                             "message_id": event.message_id,
                             "owner": event.owner
-                        }),
+                        }, ensure_ascii=False),
                         "action_id": "mark_as_read_gmail"
                     },
                     {
@@ -340,11 +376,13 @@ class SlackService:
                             "emoji": False
                         },
                         "style": "danger",
+                        # ensure_ascii=False: 한글·일본어 제목이 \uXXXX 로 6배 부풀어
+                        # Slack 버튼 value 한도(2000자)를 넘겨 invalid_blocks 가 나는 것을 방지
                         "value": json.dumps({
                             "message_id": event.message_id,
                             "sender": event.sender,
                             "subject": event.subject
-                        }),
+                        }, ensure_ascii=False),
                         "action_id": "silent_forever",
                         "confirm": {
                             "title": {

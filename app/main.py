@@ -573,7 +573,7 @@ def slack_interactive():
                                         new_elements.append({
                                             "type": "button",
                                             "text": {"type": "plain_text", "text": "다시 알림 받기"},
-                                            "value": json.dumps({"sender": snd, "subject": subj}),
+                                            "value": json.dumps({"sender": snd, "subject": subj}, ensure_ascii=False),  # 한글·일본어 제목 6배 부풀림 방지(2000자 한도)
                                             "action_id": "undo_silent"
                                         })
                                     else:
@@ -657,7 +657,7 @@ def slack_interactive():
                                             "type": "button",
                                             "text": {"type": "plain_text", "text": "이런 알림 차단"},
                                             "style": "danger",
-                                            "value": json.dumps({"sender": snd, "subject": subj}),
+                                            "value": json.dumps({"sender": snd, "subject": subj}, ensure_ascii=False),  # 한글·일본어 제목 6배 부풀림 방지(2000자 한도)
                                             "action_id": "silent_forever",
                                             "confirm": {
                                                 "title": {"type": "plain_text", "text": "앞으로 비슷한 알림을 차단할까요?"},
