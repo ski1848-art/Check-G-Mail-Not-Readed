@@ -20,7 +20,12 @@ from typing import Dict, List, Any
 from dotenv import load_dotenv
 from app.utils.logger import get_logger
 
-load_dotenv()
+# .env는 프로젝트 루트(이 파일의 상위 폴더)에서만 읽는다.
+# 인자 없는 load_dotenv()는 상위 폴더를 끝까지 거슬러 올라가며 .env를 찾기 때문에,
+# 워크트리(.claude/worktrees/...)에서 실행하면 메인 체크아웃의 운영 .env를 읽어버린다
+# (2026-10-28 테스트 환경 오염 원인). 파일이 없으면 조용히 건너뛴다.
+# 운영(Cloud Run)은 환경변수를 직접 주입하므로 영향 없음 (override=False 유지).
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 logger = get_logger("config")
 

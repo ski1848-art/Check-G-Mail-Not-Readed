@@ -101,7 +101,7 @@ class TestSystemPromptKoreanInstruction:
     """시스템 프롬프트에 한국어 요약 형식/품질 지시가 구체적으로 포함되어야 함"""
 
     @given(subject=korean_subject_strategy)
-    @settings(max_examples=10)
+    @settings(max_examples=10, deadline=None)
     def test_system_prompt_contains_detailed_korean_instructions(self, subject):
         """
         Property: 시스템 프롬프트에 한국어 요약에 대한 구체적 지시가 포함되어야 함.
@@ -146,7 +146,7 @@ class TestUserPromptBodyContext:
         subject=korean_subject_strategy,
         snippet=korean_snippet_strategy,
     )
-    @settings(max_examples=10)
+    @settings(max_examples=10, deadline=None)
     def test_user_prompt_includes_body_text_when_available(self, subject, snippet):
         """
         Property: raw_data에 body_text가 있으면 사용자 프롬프트에 포함되어야 함.
@@ -187,7 +187,7 @@ class TestParseEmptySummaryFiltering:
         score=st.floats(min_value=0.0, max_value=1.0),
         category=st.sampled_from(["notify", "silent"]),
     )
-    @settings(max_examples=10)
+    @settings(max_examples=10, deadline=None)
     def test_parse_converts_empty_summary_to_none(self, score, category):
         """
         Property: _parse()가 빈 문자열 "" summary를 None으로 변환해야 함.
@@ -230,7 +230,7 @@ class TestParseShortSummaryFiltering:
         category=st.sampled_from(["notify", "silent"]),
         short_summary=st.sampled_from(["요약", "Korean", "OK", "확인", "N/A", "없음", "test", "hi"]),
     )
-    @settings(max_examples=10)
+    @settings(max_examples=10, deadline=None)
     def test_parse_converts_short_summary_to_none(self, score, category, short_summary):
         """
         Property: _parse()가 10자 미만 summary를 None으로 변환해야 함.

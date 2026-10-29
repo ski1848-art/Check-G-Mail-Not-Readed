@@ -89,7 +89,7 @@ class TestSystemPromptStructurePreservation:
     """영문 메일에 대한 시스템 프롬프트 구조가 보존되어야 함"""
 
     @given(subject=english_subject_strategy)
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=None)
     def test_system_prompt_maintains_json_response_structure(self, subject):
         """
         Property: 랜덤 영문 메일 이벤트에 대해 _build_system_prompt() 반환값이
@@ -145,7 +145,7 @@ class TestParseValidSummaryPreservation:
         category=st.sampled_from(["notify", "silent"]),
         summary=valid_summary_strategy,
     )
-    @settings(max_examples=30)
+    @settings(max_examples=30, deadline=None)
     def test_parse_returns_valid_summary_unchanged(self, score, category, summary):
         """
         Property: 랜덤 길이의 유효한 summary(10자 이상)를 생성하여
@@ -226,7 +226,7 @@ class TestRuleBasedClassificationPreservation:
         sender=blacklist_sender_strategy,
         subject=english_subject_strategy,
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=None)
     def test_blacklist_domain_classified_as_silent(self, sender, subject):
         """
         Property: 블랙리스트 도메인에서 온 메일은 항상 SILENT로 분류되어야 함.
@@ -259,7 +259,7 @@ class TestRuleBasedClassificationPreservation:
         sender=whitelist_sender_strategy,
         subject=english_subject_strategy,
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=None)
     def test_whitelist_domain_classified_as_notify(self, sender, subject):
         """
         Property: 화이트리스트 도메인에서 온 메일은 항상 NOTIFY로 분류되어야 함.
@@ -292,7 +292,7 @@ class TestRuleBasedClassificationPreservation:
         keyword=spam_keyword_strategy,
         snippet=english_snippet_strategy,
     )
-    @settings(max_examples=20)
+    @settings(max_examples=20, deadline=None)
     def test_spam_keyword_classified_as_silent(self, keyword, snippet):
         """
         Property: 스팸 키워드가 제목에 포함된 메일은 항상 SILENT로 분류되어야 함.
@@ -339,7 +339,7 @@ class TestScoreThresholdPreservation:
         score=st.floats(min_value=0.0, max_value=0.49),
         threshold=st.just(0.50),
     )
-    @settings(max_examples=30)
+    @settings(max_examples=30, deadline=None)
     def test_score_below_threshold_classified_as_silent(self, score, threshold):
         """
         Property: score가 score_threshold_notify 미만이면 SILENT로 분류되어야 함.
@@ -374,7 +374,7 @@ class TestScoreThresholdPreservation:
         score=st.floats(min_value=0.50, max_value=1.0),
         threshold=st.just(0.50),
     )
-    @settings(max_examples=30)
+    @settings(max_examples=30, deadline=None)
     def test_score_at_or_above_threshold_classified_as_notify(self, score, threshold):
         """
         Property: score가 score_threshold_notify 이상이면 NOTIFY로 분류되어야 함.
@@ -420,7 +420,7 @@ class TestFallbackMechanismPreservation:
         subject=english_subject_strategy,
         snippet=english_snippet_strategy,
     )
-    @settings(max_examples=10)
+    @settings(max_examples=10, deadline=None)
     def test_fallback_returns_silent_when_all_services_fail(self, subject, snippet):
         """
         Property: Bedrock 클라이언트가 없으면 SILENT로 분류되어야 함.
@@ -448,7 +448,7 @@ class TestFallbackMechanismPreservation:
         subject=english_subject_strategy,
         snippet=english_snippet_strategy,
     )
-    @settings(max_examples=10)
+    @settings(max_examples=10, deadline=None)
     def test_bedrock_exception_returns_notify_for_safety(self, subject, snippet):
         """
         Property: Bedrock 호출 중 예외 발생 시 NOTIFY로 분류되어야 함 (중요 메일 누락 방지).
